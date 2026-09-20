@@ -1,0 +1,419 @@
+/* =====================================================================
+   轻读阅读器 · 结构样式表
+   =====================================================================
+   这个文件只管"长什么样"，不管"什么颜色"。
+
+   颜色全部通过「查表颜色」(looked-up color) 引用 —— 也就是那些以 -qd-
+   开头的自定义属性。JavaFX 的 CSS 里，凡是没被识别成已知属性的 - 开头
+   属性，都会被当成一个可被后代节点查找的颜色变量。
+
+   于是切换主题就变成了一件事：换一个定义了不同 -qd-* 颜色的样式表。
+   结构样式一行都不用改。
+
+   为什么在 .root 里先给一套默认值？因为万一主题文件加载失败（打包时
+   漏了资源、路径写错），界面至少还是能看的，而不是一片透明的黑色。
+   这叫"优雅降级"——界面问题不应该升级成"程序没法用"。
+   ===================================================================== */
+
+.root {
+    /* ---- 兜底配色（等效于日间主题，会被真正的主题文件覆盖）---- */
+    -qd-window-bg:      #faf9f6;
+    -qd-panel-bg:       #f1efe8;
+    -qd-panel-subtle:   #e9e6dd;
+    -qd-border:         #e3e1da;
+
+    -qd-content-bg:     #faf9f6;
+    -qd-text:           #2f2f2c;
+    -qd-text-heading:   #1a1a1a;
+    -qd-text-muted:     #7a7a7a;
+    -qd-text-faint:     #9a9a9a;
+
+    -qd-accent:         #3b6ea5;
+    -qd-selection-bg:   #dce7f5;
+    -qd-selection-text: #14314f;
+    -qd-hover-bg:       #e8e5dc;
+
+    -qd-scroll-thumb:       #cfcabb;
+    -qd-scroll-thumb-hover: #b3ad9c;
+}
+
+/* ---------------------------------------------------------------------
+   本项目的"三层表面"—— 理解这套界面的钥匙：
+
+     ① 面板层 -qd-panel-bg      菜单栏 / 书籍信息条 / 左侧目录 / 状态栏 /
+                                以及正文区的外围
+     ② 纸面层 -qd-content-bg    正文所在的那条"纸"
+     ③ 文字层 -qd-text / -heading / -muted / -faint
+
+   改版前的毛病是 ① 和 ② 取了同一个颜色：侧栏和正文连成一片，
+   没有边界，看上去"没有设计"。现在两者分开，正文就成了浮在面板上的一条
+   窄栏（版心），左右留白自然把视线收在中间。
+
+   所以，主题文件里 -qd-panel-bg 和 -qd-content-bg 必须是两个不同的值，
+   四套主题都是这么定的。新加主题时别忘了这一点。
+   --------------------------------------------------------------------- */
+
+/* ===================== 窗口整体 ===================== */
+
+.reader-window {
+    -fx-background-color: -qd-window-bg;
+}
+
+/* ===================== 菜单栏 ===================== */
+
+.reader-menubar {
+    -fx-background-color: -qd-panel-bg;
+}
+
+/* ===================== 书籍信息条 ===================== */
+
+.reader-book-bar {
+    -fx-background-color: -qd-panel-bg;
+    -fx-border-color: -qd-border;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 12 18 12 18;
+}
+
+.reader-book-title {
+    -fx-font-size: 18px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -qd-text-heading;
+}
+
+.reader-book-meta {
+    -fx-font-size: 12px;
+    -fx-text-fill: -qd-text-muted;
+}
+
+/* ===================== 左右分栏 ===================== */
+
+/* SplitPane 自带的立体边框在扁平化界面里很突兀，先去干净 */
+.split-pane {
+    -fx-background-color: -qd-panel-bg;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
+/* 分隔条：视觉上是一条 1px 竖线，但命中区域放宽到 6px。
+   这里用 background-insets 把画出来的部分收窄 —— 光靠 padding 做不到
+   "看得细、拖得准"这两个要求同时满足。 */
+.split-pane:horizontal > .split-pane-divider {
+    -fx-background-color: -qd-border;
+    -fx-background-insets: 0 2 0 2;
+    -fx-padding: 0 3 0 3;
+}
+
+.split-pane > .split-pane-divider:hover {
+    -fx-background-color: -qd-accent;
+}
+
+/* ===================== 左侧面板（目录 / 书签） ===================== */
+
+/* 侧栏用"面板层"的颜色，和右边的正文区分开。
+   这里不画右边框：紧挨着的分隔条已经是一条线了，再画一条会出现双线。 */
+.reader-side-panel {
+    -fx-background-color: -qd-panel-bg;
+}
+
+/* TabPane 本体去掉默认的立体感和白底，融进侧栏 */
+.reader-tabs {
+    -fx-background-color: transparent;
+    -fx-tab-min-height: 26px;
+    -fx-tab-max-height: 26px;
+}
+
+.reader-tabs > .tab-header-area {
+    -fx-padding: 6 6 0 6;
+}
+
+.reader-tabs > .tab-header-area > .tab-header-background {
+    -fx-background-color: transparent;
+}
+
+.reader-tabs > .tab-header-area > .headers-region > .tab {
+    -fx-background-color: transparent;
+    -fx-background-radius: 6 6 0 0;
+    -fx-padding: 4 14 4 14;
+}
+
+.reader-tabs > .tab-header-area > .headers-region > .tab .tab-label {
+    -fx-text-fill: -qd-text-muted;
+    -fx-font-size: 13px;
+}
+
+.reader-tabs > .tab-header-area > .headers-region > .tab:selected {
+    -fx-background-color: -qd-panel-subtle;
+}
+
+.reader-tabs > .tab-header-area > .headers-region > .tab:selected .tab-label {
+    -fx-text-fill: -qd-text-heading;
+    -fx-font-weight: bold;
+}
+
+/* 去掉 TabPane 底部那条默认的蓝色选中指示线，留白更干净 */
+.reader-tabs > .tab-header-area > .headers-region > .tab:selected .focus-indicator {
+    -fx-border-width: 0;
+}
+
+/* ===================== 列表（章节 / 书签） ===================== */
+
+/* 列表自身透明，让侧栏的面色透上来 —— 否则列表会把侧栏盖成另一块颜色，
+   又回到"看不出层次"的老问题上 */
+.reader-list {
+    -fx-background-color: transparent;
+    -fx-border-width: 0;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
+.reader-list .list-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: -qd-text;
+    -fx-font-size: 13px;
+    -fx-padding: 7 12 7 12;
+}
+
+.reader-list .list-cell:filled:hover {
+    -fx-background-color: -qd-hover-bg;
+}
+
+.reader-list .list-cell:filled:selected {
+    -fx-background-color: -qd-selection-bg;
+    -fx-text-fill: -qd-selection-text;
+}
+
+/* 书签单元格是两行：第一行标题、第二行位置和时间 */
+.reader-bookmark-cell {
+    -fx-padding: 6 12 6 12;
+}
+
+.reader-bookmark-title {
+    -fx-font-size: 13px;
+    -fx-text-fill: -qd-text;
+}
+
+.reader-bookmark-meta {
+    -fx-font-size: 11px;
+    -fx-text-fill: -qd-text-faint;
+}
+
+.reader-list .list-cell:filled:selected .reader-bookmark-title {
+    -fx-text-fill: -qd-selection-text;
+}
+
+.reader-list .list-cell:filled:selected .reader-bookmark-meta {
+    -fx-text-fill: -qd-selection-text;
+    -fx-opacity: 0.75;
+}
+
+/* 空列表时的提示文字 */
+.reader-empty-hint {
+    -fx-font-size: 12px;
+    -fx-text-fill: -qd-text-faint;
+    -fx-padding: 10 12 10 12;
+}
+
+/* 目录里"这一章有书签"的小圆点 */
+.reader-bookmark-flag {
+    -fx-font-size: 10px;
+    -fx-text-fill: -qd-accent;
+}
+
+/* ===================== 正文区 ===================== */
+
+/* 滚动容器的底色是"面板层"：正文那条窄栏之外的部分就是它。
+   注意不是 content-bg —— 那成了正文自己的颜色，就分不出纸和桌面了。 */
+.reader-content-scroll {
+    -fx-background-color: -qd-panel-bg;
+    -fx-border-width: 0;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
+/* ScrollPane 的视口默认是浅色方块，必须设成透明，
+   否则主题换了背景色之后，视口还会留一块白 */
+.reader-content-scroll > .viewport {
+    -fx-background-color: transparent;
+}
+
+/* 这张就是"纸"。宽度由 ReaderView 按"一行多少字 × 字号"算出来写进去，
+   不是撑满整个窗口 —— 一行太长的中文读起来会频繁串行。
+   纸的内边距也由代码设置（它参与上面那个宽度计算，拆成两处容易不一致）。 */
+.reader-content {
+    -fx-background-color: -qd-content-bg;
+}
+
+/* 段落与标题：颜色归主题管，字体/字号由代码按用户设置写行内样式 */
+.reader-paragraph {
+    -fx-text-fill: -qd-text;
+}
+
+.reader-heading {
+    -fx-font-weight: bold;
+    -fx-text-fill: -qd-text-heading;
+    -fx-padding: 0 0 8 0;
+}
+
+.reader-image-note {
+    -fx-font-size: 13px;
+    -fx-text-fill: -qd-text-faint;
+    -fx-padding: 8 0 8 0;
+}
+
+.reader-muted-hint {
+    -fx-font-size: 14px;
+    -fx-text-fill: -qd-text-faint;
+}
+
+/* 欢迎页 */
+.reader-welcome-title {
+    -fx-font-size: 34px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -qd-text-heading;
+}
+
+.reader-welcome-subtitle {
+    -fx-font-size: 15px;
+    -fx-text-fill: -qd-text-muted;
+}
+
+.reader-welcome-hint {
+    -fx-font-size: 13px;
+    -fx-text-fill: -qd-text-faint;
+    -fx-text-alignment: center;
+}
+
+/* ===================== 全书进度条 ===================== */
+
+/* 正文区底下那条 3px 的细线，宽度和版心对齐。
+   JavaFX 自带的 ProgressBar 是一根有厚度、有内边距的"条"，这里把
+   padding 和圆角全部清零、高度压到 3px，把它改造成一条"线"。
+   比另写一套进度条控件省事得多，行为也还是标准控件的。 */
+.reader-reading-pane {
+    -fx-background-color: -qd-panel-bg;
+}
+
+.reader-progress-bar {
+    -fx-pref-height: 3px;
+    -fx-min-height: 3px;
+    -fx-max-height: 3px;
+    -fx-padding: 0;
+    -fx-background-insets: 0;
+    -fx-background-radius: 0;
+}
+
+.reader-progress-bar > .track {
+    -fx-background-color: -qd-panel-subtle;
+    -fx-background-insets: 0;
+    -fx-background-radius: 0;
+}
+
+.reader-progress-bar > .bar {
+    -fx-background-color: -qd-accent;
+    -fx-background-insets: 0;
+    -fx-background-radius: 0;
+    -fx-padding: 0;
+}
+
+/* ===================== 状态栏 ===================== */
+
+.reader-statusbar {
+    -fx-background-color: -qd-panel-bg;
+    -fx-border-color: -qd-border;
+    -fx-border-width: 1 0 0 0;
+    -fx-padding: 7 16 7 16;
+}
+
+/* 左边是位置，右边是全书进度，中间靠 hgrow 撑开 */
+.reader-status-text {
+    -fx-font-size: 12px;
+    -fx-text-fill: -qd-text-muted;
+}
+
+.reader-status-progress {
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -qd-accent;
+}
+
+/* ===================== 滚动条 ===================== */
+
+/* JavaFX 自带的滚动条是"立体 + 带箭头"的老式样子，和这套扁平界面不搭。
+   做法是：轨道透明、滑块压窄成圆角小条、两端箭头压成 0 尺寸。
+   作用范围是所有 ScrollBar（正文区、目录、书签都吃得到）。 */
+
+.scroll-bar:vertical {
+    -fx-pref-width: 10px;
+    -fx-background-color: transparent;
+}
+
+.scroll-bar:horizontal {
+    -fx-pref-height: 10px;
+    -fx-background-color: transparent;
+}
+
+.scroll-bar > .track,
+.scroll-bar > .track-background {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-border-width: 0;
+}
+
+/* 滑块。这里必须带上 :vertical / :horizontal 限定，
+   否则盖不过 Modena 里 .scroll-bar:vertical > .thumb 那条（它多一个伪类，
+   优先级更高），滑块颜色不会变。 */
+.scroll-bar:vertical > .thumb,
+.scroll-bar:horizontal > .thumb {
+    -fx-background-color: -qd-scroll-thumb;
+    -fx-background-insets: 0;
+    -fx-background-radius: 5px;
+}
+
+.scroll-bar:vertical:hover > .thumb,
+.scroll-bar:horizontal:hover > .thumb {
+    -fx-background-color: -qd-scroll-thumb-hover;
+}
+
+/* 去掉两端的箭头按钮：按钮和它里面的箭头一起压成 0 尺寸 */
+.scroll-bar:vertical > .increment-button,
+.scroll-bar:vertical > .decrement-button,
+.scroll-bar:horizontal > .increment-button,
+.scroll-bar:horizontal > .decrement-button {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+    -fx-pref-width: 0;
+    -fx-pref-height: 0;
+    -fx-min-width: 0;
+    -fx-min-height: 0;
+}
+
+.scroll-bar:vertical > .increment-button > .increment-arrow,
+.scroll-bar:vertical > .decrement-button > .decrement-arrow,
+.scroll-bar:horizontal > .increment-button > .increment-arrow,
+.scroll-bar:horizontal > .decrement-button > .decrement-arrow {
+    -fx-shape: " ";
+    -fx-padding: 0;
+}
+
+/* 横竖滚动条交汇处的小方块 */
+.scroll-pane > .corner {
+    -fx-background-color: transparent;
+}
+
+/* ===================== 对话框（设置 / 关于） ===================== */
+
+.settings-dialog {
+    -fx-background-color: -qd-panel-bg;
+}
+
+.settings-label {
+    -fx-font-size: 13px;
+    -fx-text-fill: -qd-text;
+}
+
+.settings-preview {
+    -fx-background-color: -qd-content-bg;
+    -fx-border-color: -qd-border;
+    -fx-border-width: 1;
+    -fx-padding: 12;
+}

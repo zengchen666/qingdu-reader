@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.qingdu</groupId>
+        <artifactId>qingdu-reader</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>qingdu-desktop</artifactId>
+    <name>轻读阅读器 - 桌面端</name>
+    <description>JavaFX 图形界面</description>
+
+    <dependencies>
+        <!-- 界面要展示书和章节，所以依赖核心引擎（它又会传递依赖 common） -->
+        <dependency>
+            <groupId>com.qingdu</groupId>
+            <artifactId>qingdu-core</artifactId>
+        </dependency>
+
+        <!-- 存储层：阅读进度、书签、阅读设置 -->
+        <dependency>
+            <groupId>com.qingdu</groupId>
+            <artifactId>qingdu-store</artifactId>
+        </dependency>
+
+        <!-- JavaFX：只用声明 controls 和 fxml，
+             base / graphics 会被 Maven 自动传递引入 -->
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-controls</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-fxml</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- ============================================================
+                 JavaFX Maven 插件：提供 `mvn javafx:run` 命令直接启动界面。
+                 它内部会自动拼出正确的 java 命令（包含模块路径 module-path
+                 与模块加载 add-modules 这两个参数），不用我们手写一长串
+                 VM 参数。
+                 ============================================================ -->
+            <plugin>
+                <groupId>org.openjfx</groupId>
+                <artifactId>javafx-maven-plugin</artifactId>
+                <version>${javafx-maven-plugin.version}</version>
+                <configuration>
+                    <!-- 主类用 Launcher 而不是 QingduApplication，原因见 Launcher 源码注释 -->
+                    <mainClass>com.qingdu.reader.Launcher</mainClass>
+
+                    <!-- 传给被启动的那个 JVM 的额外参数。
+                         背景：JDK 24 起对"调用受限的本地方法"默认给出警告，
+                         JavaFX 加载自己的原生库正属于这一类，所以每次启动都会往
+                         stderr 打两行 WARNING。它本身无害，但会造成两个麻烦：
+                           1. 控制台看起来很像是出错了；
+                           2. PowerShell 会把 stderr 内容包成 NativeCommandError，
+                              于是把整条命令的退出码判成 1 —— 明明 BUILD SUCCESS。
+                         这个参数就是那个警告自己提示的解法。 -->
+                    <options>
+                        <option>--enable-native-access=javafx.graphics</option>
+                        <!-- SQLite 的 JDBC 驱动会把自带的 sqlitejdbc.dll 解压到临时目录再加载，
+                             那也属于"受限的本地方法调用"。这个驱动是从 classpath 加载的，
+                             在模块系统里属于【未命名模块】，所以要单独写 ALL-UNNAMED ——
+                             它和上面那条 javafx.graphics 管的是两件不同的事，两个都不能省。 -->
+                        <option>--enable-native-access=ALL-UNNAMED</option>
+                    </options>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

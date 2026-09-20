@@ -1,0 +1,25 @@
+/* 羊皮纸主题：米黄底。
+   和日间主题的区别不只是"更黄"——正文颜色用的是偏棕的深色（#4a3f2f）
+   而不是中性灰黑，这样整页的色温是统一的，看起来像印在纸上，
+   而不是"白纸上盖了一层黄滤镜"。 */
+.root {
+    -qd-window-bg:      #f4ecd8;
+    -qd-panel-bg:       #e8dcc0;
+    -qd-panel-subtle:   #ddcfac;
+    -qd-border:         #cdbc95;
+
+    -qd-content-bg:     #f4ecd8;
+    -qd-text:           #4a3f2f;
+    -qd-text-heading:   #2f2617;
+    -qd-text-muted:     #8a7a5f;
+    -qd-text-faint:     #a89a80;
+
+    -qd-accent:         #8a6a35;
+    -qd-selection-bg:   #e0cfa8;
+    -qd-selection-text: #3a2d14;
+    -qd-hover-bg:       #ece0c6;
+
+    /* 羊皮纸主题的滑块用偏棕的米色，和正文的棕调文字保持同一个色温 */
+    -qd-scroll-thumb:       #d0bf98;
+    -qd-scroll-thumb-hover: #bdaa79;
+}

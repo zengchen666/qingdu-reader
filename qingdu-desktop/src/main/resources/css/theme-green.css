@@ -1,0 +1,25 @@
+/* 护眼主题：淡绿底。
+   绿色能降低屏幕对比度带来的刺激，是中文阅读器里最常见的"护眼模式"。
+   注意绿色的明度要和日间接近（都在 90% 上下），否则切过来会觉得
+   整个界面突然暗了一档，反而更累。 */
+.root {
+    -qd-window-bg:      #d3e8d5;
+    -qd-panel-bg:       #c3ddc6;
+    -qd-panel-subtle:   #b6d3ba;
+    -qd-border:         #a7c6ac;
+
+    -qd-content-bg:     #d3e8d5;
+    -qd-text:           #26332a;
+    -qd-text-heading:   #17231a;
+    -qd-text-muted:     #4f6b56;
+    -qd-text-faint:     #74907b;
+
+    -qd-accent:         #3f7d52;
+    -qd-selection-bg:   #a9d2b0;
+    -qd-selection-text: #16301d;
+    -qd-hover-bg:       #c5dfc8;
+
+    /* 护眼主题里滑块偏"草绿"，不用纯灰 —— 灰色压在绿底上会显脏 */
+    -qd-scroll-thumb:       #a9c6ad;
+    -qd-scroll-thumb-hover: #8fb394;
+}

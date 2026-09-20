@@ -1,0 +1,56 @@
+/* 夜间主题。
+   除了自己的 -qd-* 配色，这里还要额外覆盖一批 JavaFX 内置的
+   "查表颜色"（-fx-base、-fx-control-inner-background 之类）。
+
+   原因：JavaFX 自带的 Modena 样式表默认是浅色的，菜单栏、弹出菜单、
+   选项卡、滚动条、对话框全都是按浅色画的。我们的 CSS 只能覆盖自己
+   写的那些类，覆盖不到 Modena 内部几十条规则。
+   但它们几乎都从 -fx-base / -fx-background 这几个"根变量"派生出来 ——
+   把这几个变量改成深色，整套控件就会跟着变深。
+
+   这是 JavaFX 换肤最省力也最不容易漏的做法：
+   与其逐条重写控件样式，不如改它们共同的源头。
+
+   两个刻意的取舍：
+   · 背景不用纯黑 #000：纯黑配浅字在高对比下会产生"光晕"，反而更刺眼。
+   · 正文不用纯白 #fff：亮度太高，长时间看在暗环境里会累。
+   所以是"深灰底 + 浅灰字"，而不是"黑底白字"。 */
+.root {
+    /* ---- JavaFX 内置控件的根变量（让菜单、滚动条、对话框一起变深）---- */
+    -fx-base: #2b2d31;
+    -fx-background: #1e1f22;
+    -fx-control-inner-background: #26272b;
+    -fx-control-inner-background-alt: #2a2b30;
+    -fx-text-background-color: #d6d6d2;
+    -fx-mid-text-color: #a8a8a4;
+    -fx-light-text-color: #e8e8e4;
+    -fx-dark-text-color: #1a1a1a;
+    -fx-accent: #3d5a7a;
+    -fx-focus-color: #4a7fb5;
+    -fx-faint-focus-color: #4a7fb522;
+    -fx-selection-bar: #34455a;
+    -fx-selection-bar-non-focused: #3a3d44;
+
+    /* ---- 本项目的自定义配色 ---- */
+    -qd-window-bg:      #1e1f22;
+    -qd-panel-bg:       #26272b;
+    -qd-panel-subtle:   #33353b;
+    -qd-border:         #3a3c42;
+
+    -qd-content-bg:     #1e1f22;
+    -qd-text:           #c9c9c4;
+    -qd-text-heading:   #eaeae6;
+    -qd-text-muted:     #8d8f94;
+    -qd-text-faint:     #6d7075;
+
+    -qd-accent:         #6ea8dc;
+    -qd-selection-bg:   #34455a;
+    -qd-selection-text: #e8f0f8;
+    -qd-hover-bg:       #2f3136;
+
+    /* 夜间主题里滑块要比面板"亮"一点才看得见。
+       注意夜间主题覆盖了 -fx-base（滚动条默认色就是从它派生的），
+       但我们在 base.css 里显式指定了 -qd-scroll-thumb，会盖过它 */
+    -qd-scroll-thumb:       #3f4247;
+    -qd-scroll-thumb-hover: #4e5258;
+}

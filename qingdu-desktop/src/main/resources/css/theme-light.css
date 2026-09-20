@@ -1,0 +1,25 @@
+/* 日间主题（默认）：白底深字，纸感微暖。
+   正文背景刻意不用纯白 #ffffff —— 纯白在大屏上长时间阅读偏刺眼，
+   略暗一点的 #faf9f6 更接近纸的观感。 */
+.root {
+    -qd-window-bg:      #faf9f6;
+    -qd-panel-bg:       #f1efe8;
+    -qd-panel-subtle:   #e9e6dd;
+    -qd-border:         #e3e1da;
+
+    -qd-content-bg:     #faf9f6;
+    -qd-text:           #2f2f2c;
+    -qd-text-heading:   #1a1a1a;
+    -qd-text-muted:     #7a7a7a;
+    -qd-text-faint:     #9a9a9a;
+
+    -qd-accent:         #3b6ea5;
+    -qd-selection-bg:   #dce7f5;
+    -qd-selection-text: #14314f;
+    -qd-hover-bg:       #e8e5dc;
+
+    /* 滚动条滑块。压在 -qd-panel-bg 上，要沉下去一点才看得出来，
+       所以取的是比面板更深的暖灰，而不是面板本身的色阶 */
+    -qd-scroll-thumb:       #cfcabb;
+    -qd-scroll-thumb-hover: #b3ad9c;
+}
