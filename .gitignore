@@ -1,0 +1,79 @@
+# ===== 构建产物 =====
+target/
+build/
+out/
+*.class
+*.jar
+*.war
+!.mvn/wrapper/maven-wrapper.jar
+
+# ===== Maven Wrapper =====
+.mvn/wrapper/maven-wrapper.properties
+
+# ===== 日志 =====
+*.log
+logs/
+log/
+# JVM 崩溃时落在工作目录的转储文件，不要提交
+hs_err_pid*.log
+replay_pid*.log
+
+# ===== 本地临时文件（排查问题、跑冒烟测试时生成的中间产物）=====
+# 这些不是项目内容，只是"当时为了看清情况"临时落盘的文本，
+# 检查完就可以删。统一用下划线开头，方便一眼认出、也方便一次清掉。
+_*
+_probe/
+report.txt
+
+# ===== 运行时数据（本地书库与配置，不要提交）=====
+data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# ===== 打包产物 =====
+dist/
+release/
+*.exe
+*.msi
+*.dmg
+*.deb
+*.rpm
+*.app
+
+# ===== IntelliJ IDEA =====
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# ===== Eclipse =====
+.classpath
+.project
+.settings/
+bin/
+
+# ===== VS Code =====
+.vscode/
+
+# ===== NetBeans =====
+nbproject/private/
+nbbuild/
+dist/
+nbdist/
+.nb-gradle/
+
+# ===== 操作系统 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+
+# ===== 环境与密钥（绝对不要提交）=====
+.env
+*.pem
+*.key
+application-local.yml
+application-local.properties

@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- ============================================================
+         项目坐标：groupId + artifactId + version 三者唯一标识一个项目
+         packaging = pom 表示这是个"聚合/父"工程，本身不产出 jar
+         ============================================================ -->
+    <groupId>com.qingdu</groupId>
+    <artifactId>qingdu-reader</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+
+    <name>轻读阅读器</name>
+    <description>轻量化的中文小说阅读器 · 本地优先 · 纯 Java 实现</description>
+
+    <!-- ============================================================
+         子模块列表。Maven 会按顺序到这些目录里找各自的 pom.xml，
+         从而知道"这个项目由哪几块组成"。
+         注意：qingdu-server（云端同步）暂时不建，等做到那一步再加。
+         ============================================================ -->
+    <modules>
+        <module>qingdu-common</module>
+        <module>qingdu-core</module>
+        <module>qingdu-store</module>
+        <module>qingdu-desktop</module>
+    </modules>
+
+    <!-- ============================================================
+         properties：集中管理"版本号"和"编译参数"
+         好处是以后升级版本只需要改这一处，不用全项目搜替换。
+         ============================================================ -->
+    <properties>
+        <!-- 编译目标版本。maven.compiler.release 会让编译器严格按这个
+             版本的 API 来编译，避免用到更高版本才有的方法。 -->
+        <java.version>25</java.version>
+        <maven.compiler.release>${java.version}</maven.compiler.release>
+
+        <!-- 源码与报告统一用 UTF-8，否则中文注释和中文界面会乱码 -->
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <!-- 各依赖的版本号，统一放这里 -->
+        <javafx.version>25.0.4</javafx.version>
+        <sqlite.version>3.53.4.0</sqlite.version>
+        <junit.version>5.11.4</junit.version>
+
+        <!-- 插件版本 -->
+        <maven-compiler-plugin.version>3.14.0</maven-compiler-plugin.version>
+        <maven-surefire-plugin.version>3.5.2</maven-surefire-plugin.version>
+        <javafx-maven-plugin.version>0.0.8</javafx-maven-plugin.version>
+    </properties>
+
+    <!-- ============================================================
+         dependencyManagement：只"声明版本"，不"引入依赖"。
+         子模块写依赖时可以省略 <version>，自动继承这里的定义。
+         这是 Maven 多模块项目最核心的机制 —— 保证全项目依赖版本一致。
+         ============================================================ -->
+    <dependencyManagement>
+        <dependencies>
+
+            <!-- === 本项目内部模块 === -->
+            <dependency>
+                <groupId>com.qingdu</groupId>
+                <artifactId>qingdu-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.qingdu</groupId>
+                <artifactId>qingdu-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.qingdu</groupId>
+                <artifactId>qingdu-store</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <!-- === SQLite ===
+                 纯 Java + 内嵌本地库的 JDBC 驱动，jar 里已经带了各平台的原生库
+                 （Windows 下是 sqlitejdbc.dll），运行时会自动解压到临时目录加载。
+                 所以它既是"依赖"，也是 jlink 裁剪时看不到的隐式原生依赖。 -->
+            <dependency>
+                <groupId>org.xerial</groupId>
+                <artifactId>sqlite-jdbc</artifactId>
+                <version>${sqlite.version}</version>
+            </dependency>
+
+            <!-- === JavaFX ===
+                 从 JDK 11 起 JavaFX 已从 JDK 中剥离，必须单独引入。
+                 注意：OpenJFX 的 Maven 构件会自动根据当前操作系统
+                 拉取对应的本地库（Windows 版），所以不需要我们手动指定。 -->
+            <dependency>
+                <groupId>org.openjfx</groupId>
+                <artifactId>javafx-base</artifactId>
+                <version>${javafx.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.openjfx</groupId>
+                <artifactId>javafx-graphics</artifactId>
+                <version>${javafx.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.openjfx</groupId>
+                <artifactId>javafx-controls</artifactId>
+                <version>${javafx.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.openjfx</groupId>
+                <artifactId>javafx-fxml</artifactId>
+                <version>${javafx.version}</version>
+            </dependency>
+
+            <!-- === 单元测试 === -->
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
+            </dependency>
+
+        </dependencies>
+    </dependencyManagement>
+
+    <!-- ============================================================
+         build：所有子模块共用的构建配置
+         ============================================================ -->
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${maven-compiler-plugin.version}</version>
+                    <configuration>
+                        <release>${maven.compiler.release}</release>
+                        <encoding>UTF-8</encoding>
+                    </configuration>
+                </plugin>
+
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${maven-surefire-plugin.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+
+        <plugins>
+            <!-- 编译器插件对所有模块都生效，所以放在 plugins（不是 pluginManagement）里 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>
