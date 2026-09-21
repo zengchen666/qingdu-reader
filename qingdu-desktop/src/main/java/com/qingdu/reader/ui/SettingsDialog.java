@@ -74,7 +74,7 @@ public class SettingsDialog extends Dialog<ReaderSettings> {
 
     /** 示例内容：刻意挑了一段有长句、有标点的中文，能看出换行和字距效果。 */
     private static final Chapter PREVIEW_CHAPTER = new Chapter(
-            "preview", 0, "第一章 星光落下", 0, 0,
+            "preview", 0, "第一章 星光落下", null, 0, 0,
             List.of(
                     new ChapterBlock.Heading(1, "第一章 星光落下"),
                     new ChapterBlock.Paragraph(

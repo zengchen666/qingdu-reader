@@ -290,7 +290,7 @@ public class TxtBookParser implements BookParser {
             end = Math.max(start, Math.min(end, fileSize));
             if (end == start) {
                 return new Chapter(skeleton.bookId(), skeleton.index(), skeleton.title(),
-                        start, end, List.of());
+                        skeleton.volumeTitle(), start, end, List.of());
             }
 
             byte[] buffer = new byte[(int) (end - start)];
@@ -304,7 +304,7 @@ public class TxtBookParser implements BookParser {
             List<ChapterBlock> blocks = toBlocks(codec.decodeAll(buffer), skeleton.title());
 
             return new Chapter(skeleton.bookId(), skeleton.index(), skeleton.title(),
-                    start, end, blocks);
+                    skeleton.volumeTitle(), start, end, blocks);
 
         } catch (IOException e) {
             throw new BookParseException("读取章节正文失败：" + e.getMessage(), pathOf(file), e);

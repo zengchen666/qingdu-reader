@@ -236,7 +236,7 @@ class TxtChapterSplitterTest {
     }
 
     @Test
-    @DisplayName("分卷小说：每卷从「第一章」重新开始计数，不能被序号规则误杀")
+    @DisplayName("分卷小说：卷标题只作分组不占章节，每卷重新计数不被序号规则误杀")
     void volumeResetIsHandled() {
         String text = HEADER + """
 
@@ -264,9 +264,60 @@ class TxtChapterSplitterTest {
         TxtChapterSplitter.Report report = splitter.analyze(
                 text.getBytes(StandardCharsets.UTF_8), TextCodec.utf8(), "book-1");
 
-        assertEquals(6, report.chapters().size(), "两卷共 2+4 个标题都应保留");
+        // 卷标题不再是章节：全书只剩 4 个真章节（原先会把 2 个卷头也算进去）
+        assertEquals(4, report.chapters().size(), "卷标题不占章节，只剩 4 个真章节");
         assertTrue(report.volumeResets() >= 1, "应该识别出卷边界重置");
         assertFalse(report.fallback());
+
+        List<Chapter> chapters = report.chapters();
+        assertEquals("第一章 出山", chapters.get(0).title());
+        assertEquals("第二章 分别", chapters.get(3).title());
+
+        // 卷标题挂到「它之后、下一卷之前」的每一章上
+        assertEquals("第一卷 启程", chapters.get(0).volumeTitle());
+        assertEquals("第一卷 启程", chapters.get(1).volumeTitle());
+        assertEquals("第二卷 风起", chapters.get(2).volumeTitle());
+        assertEquals("第二卷 风起", chapters.get(3).volumeTitle());
+        assertTrue(chapters.get(0).hasVolume(), "第一章应能查到所属卷");
+
+        // 不变量：卷标题的字节没被丢弃，它落在「上一章末尾」这个间隙里
+        assertTrue(contentOf(text, chapters.get(1)).contains("第二卷 风起"),
+                "卷标题那行字节应归入上一章末尾");
+    }
+
+    @Test
+    @DisplayName("卷标题出现在全书最开头：不占章节，也不会被当成「开篇」")
+    void leadingVolumeTitleDoesNotBecomeChapter() {
+        String text = HEADER + """
+
+                第一卷 启程
+
+                第一章 出山
+
+                甲章正文。
+
+                第二章 入城
+
+                乙章正文。
+
+                第三章 归乡
+
+                丙章正文。
+                """;
+
+        TxtChapterSplitter.Report report = splitter.analyze(
+                text.getBytes(StandardCharsets.UTF_8), TextCodec.utf8(), "book-1");
+
+        List<Chapter> chapters = report.chapters();
+        assertFalse(report.fallback(), "3 章已够数，不该退化成单章");
+        assertEquals(3, chapters.size(), "卷标题和它前后的空行都不该变成章节");
+        // 第一章即开篇位置，说明前置的卷标题没被当成「开篇」独立成章
+        assertEquals("第一章 出山", chapters.get(0).title());
+        assertEquals("第一卷 启程", chapters.get(0).volumeTitle());
+        assertEquals("第一卷 启程", chapters.get(1).volumeTitle());
+        assertEquals("第一卷 启程", chapters.get(2).volumeTitle());
+        assertTrue(contentOf(text, chapters.get(0)).startsWith("第一章 出山"),
+                "第一章的起点应是标题那一行，卷标题不计入正文头");
     }
 
     @Test

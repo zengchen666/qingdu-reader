@@ -37,6 +37,9 @@ import java.util.List;
  *   <li><b>序号全局对齐</b>：见 {@link #alignByNumber}。先把候选按"换卷 / 重新从第一
  *       章开始"切成若干<b>段</b>，再在<b>每一段内求最长严格递增子序列</b>，
  *       子序列之外的候选（正文引述、重复标题、错位的高序号）全部丢弃。</li>
+ *   <li><b>卷标题只做分组</b>：分卷标题不产出章节，而是记进后续章节的
+ *       {@code volumeTitle}，由目录侧栏渲染成分组头 —— 它实际只有二十几个字节，
+ *       单独成章就是一条"点进去什么都没有"的空条目。</li>
  * </ol>
  *
  * <p><b>为什么不是"逐个比较、遇到回退就扔"？</b><br>
@@ -212,27 +215,51 @@ public final class TxtChapterSplitter {
         int sequenceRejected = alignment.dropped();
         int volumeResets = alignment.boundaries();
 
-        // ---------- 都没剩下或太少：退化为单章 ----------
-        if (kept.size() < options.minChapters()) {
+        // ---------- 生成章节列表 ----------
+        //
+        // 分卷标题不产出章节，只作为分组信息挂到它后面的章节上。
+        // 理由是它一个"章"实际只有二十几个字节（就是标题那一行），
+        // 进了目录就是一条点进去什么都没有的空条目 ——
+        // 《全职高手》原本就有 3 个这样的条目（第一卷/第二卷/第三卷）。
+        //
+        // 不变量：相邻章仍然首尾相接。卷标题那几十个字节不会被丢掉，
+        // 它落在"上一章的 endOffset 到下一章的 startOffset"之间，
+        // 也就是归入上一章的末尾（若它出现在全书最前，则归入"开篇"）。
+        List<Hit> chapterHits = new ArrayList<>(kept.size());
+        List<String> volumeOfChapter = new ArrayList<>(kept.size());
+        String currentVolume = null;
+        for (Hit hit : kept) {
+            if (hit.match().kind() == ChapterTitleMatcher.Kind.VOLUME) {
+                currentVolume = hit.match().displayText();
+                continue;
+            }
+            chapterHits.add(hit);
+            volumeOfChapter.add(currentVolume);
+        }
+
+        // 判断"有没有稳定分章结构"要按真正的章节数来算，卷标题不算章节
+        if (chapterHits.size() < options.minChapters()) {
             return singleChapterReport(data, codec, bookId,
                     candidateCount, inlineHeadings, sequenceRejected, tocDropped, volumeResets);
         }
 
-        // ---------- 生成章节列表 ----------
-        List<Chapter> chapters = new ArrayList<>(kept.size() + 1);
+        List<Chapter> chapters = new ArrayList<>(chapterHits.size() + 1);
 
         // 首个标题之前的文字：如果足够长，单独作为"开篇"
-        Chapter prefix = buildPrefixChapter(data, codec, bookId, kept.get(0).startOffset());
+        Chapter prefix = buildPrefixChapter(data, codec, bookId, chapterHits.get(0).startOffset());
         int index = 0;
         if (prefix != null) {
             chapters.add(withIndex(prefix, index++));
         }
 
-        for (int i = 0; i < kept.size(); i++) {
-            Hit hit = kept.get(i);
+        for (int i = 0; i < chapterHits.size(); i++) {
+            Hit hit = chapterHits.get(i);
             long start = hit.startOffset();
-            long end = (i + 1 < kept.size()) ? kept.get(i + 1).startOffset() : data.length;
-            chapters.add(Chapter.indexOnly(bookId, index++, hit.match().displayText(), start, end));
+            long end = (i + 1 < chapterHits.size())
+                    ? chapterHits.get(i + 1).startOffset()
+                    : data.length;
+            chapters.add(Chapter.indexOnly(bookId, index++, hit.match().displayText(),
+                    volumeOfChapter.get(i), start, end));
         }
 
         return new Report(chapters, candidateCount, inlineHeadings,
@@ -398,7 +425,16 @@ public final class TxtChapterSplitter {
         List<Integer> numbered = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
             ChapterTitleMatcher.Match m = segment.get(i).match();
-            if (m.kind() == ChapterTitleMatcher.Kind.SPECIAL || !m.numbered()) {
+            if (m.kind() == ChapterTitleMatcher.Kind.SPECIAL
+                    || m.kind() == ChapterTitleMatcher.Kind.VOLUME
+                    || !m.numbered()) {
+                // 特殊章名（楔子 / 番外）和分卷标题都不属于「章节序号体系」，
+                // 不参与递增比较，一律保留。
+                //
+                // 卷标题尤其不能混进来：它的序号（"第一卷" = 1）会和真正的
+                // "第一章"撞车 —— 求最长递增链时二选一，有可能选中卷标题
+                // 而把第一章挤掉，白白丢一章。反正卷标题不产出目录条目，
+                // 多留一个的代价只是多一个分组头。
                 keep[i] = true;
             } else {
                 numbered.add(i);
@@ -575,7 +611,7 @@ public final class TxtChapterSplitter {
 
     /** 重新指定章节序号。record 是不可变的，所以要造一个新对象。 */
     private Chapter withIndex(Chapter chapter, int index) {
-        return Chapter.indexOnly(chapter.bookId(), index, chapter.title(),
+        return Chapter.indexOnly(chapter.bookId(), index, chapter.title(), chapter.volumeTitle(),
                 chapter.startOffset(), chapter.endOffset());
     }
 }
