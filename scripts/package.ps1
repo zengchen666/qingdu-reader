@@ -30,7 +30,10 @@ param(
     [string] $AppName = "QingduReader",
 
     # 版本号，会写进程序元数据。
-    [string] $Version = "0.1.0",
+    # 注意：这里是硬编码的，改版本号必须同步改这里 —— app\ 里的 jar 名带的是
+    # Maven 的 POM 版本（0.1.1-SNAPSHOT），而 exe / zip 名字带的是这里的 $Version，
+    # 两边不一致会出现"jar 是新代码、exe 显示的还是老版本"的错觉。
+    [string] $Version = "0.1.1",
 
     # 跳过 Maven 构建，直接复用上一次的 jar（改完代码要重新打包时不要加这个）。
     [switch] $SkipBuild

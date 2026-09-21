@@ -7,7 +7,7 @@
 ![status](https://img.shields.io/badge/状态-开发中-orange)
 ![jdk](https://img.shields.io/badge/JDK-25-blue)
 ![javafx](https://img.shields.io/badge/JavaFX-25.0.4-blue)
-![license](https://img.shields.io/badge/License-MIT-green)
+![license](https://img.shields.io/badge/License-Apache%202.0-green)
 
 </div>
 
@@ -696,10 +696,10 @@ java --module-path qingdu-desktop\target\package-stage\fx ^
 | 1.2 | 阅读功能：进度保存与恢复、最近打开、书签、四套主题、字体字号段距 | **已完成** |
 | 1.3 | 阅读界面：版心（一行约 34 字）、面板/纸面分层、滚动条美化、全书进度条 | **已完成** |
 | 1.4 | 应用图标：每个尺寸单独绘制的多档 PNG（窗口）+ 多档 ICO（exe 文件） | **已完成** |
-| 2 | 书库管理：书架、分组、搜索、书签备注、收藏夹监控、阅读时长 | 计划中 |
+| 2 | 书库管理：**书架 + 批量导入 + 封面占位已完成（v0.1.1）**；分组、搜索、书签备注、收藏夹监控、阅读时长待做 | **进行中** |
 | 3 | 沉浸体验：全屏阅读、自动滚动、行距 / 双栏 | 计划中 |
 | 4 | EPUB 支持：epub4j 解析、统一章节模型落地、图片处理 | 计划中 |
-| 5 | 打包发布：jlink + jpackage、GitHub Release | **已完成（绿色版 + [v0.1.0 Release](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.1.0)；`.msi` 安装包待做）** |
+| 5 | 打包发布：jlink + jpackage、GitHub Release | **已完成（绿色版 + [v0.1.0 Release](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.1.0)；v0.1.1 绿色版已构建待上传；`.msi` 安装包待做）** |
 | 6 | 云端同步：Spring Boot 服务、账号、进度同步 | 远期 |
 | 7 | 扩展：全文搜索（SQLite FTS5）、听书、更多格式 | 远期 |
 
@@ -718,7 +718,14 @@ java --module-path qingdu-desktop\target\package-stage\fx ^
 
 ## License
 
-[MIT](LICENSE)
+本项目使用 **[Apache License 2.0](LICENSE)**。
+
+选 Apache-2.0 而不是 MIT，是因为它对**专利**有明确授予条款（第 3 条）和**终止条款**
+（第 3 条末段：一旦你就本项目提起专利诉讼，授予你的专利许可即告终止），
+对使用者的保护比 MIT 更完整；同时它保留了 MIT 那种"随便用、只需保留声明"的宽松度。
+代价只有一条：**修改过的文件必须标注改动**（第 4 条 b 款），对 forks 来说这点成本可以忽略。
+
+第三方依赖（JavaFX、sqlite-jdbc 等）各自的许可证不变，见各自项目。
 
 ---
 

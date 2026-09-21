@@ -11,11 +11,38 @@
          ============================================================ -->
     <groupId>com.qingdu</groupId>
     <artifactId>qingdu-reader</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.1.1-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <name>轻读阅读器</name>
     <description>轻量化的中文小说阅读器 · 本地优先 · 纯 Java 实现</description>
+    <url>https://github.com/zengchen666/qingdu-reader</url>
+
+    <!-- ============================================================
+         许可证声明。写在父 POM 里，四个子模块自动继承，
+         这样 mvn 生成的站点/元数据里就能带上许可证信息。
+
+         选 Apache-2.0 而不是 MIT：前者有明确的专利授予与终止条款，
+         对使用者的保护更完整；代价只是"修改过的文件要标注改动"。
+         注意这里只声明**本项目**的许可证 —— 打包产物里 JavaFX、
+         sqlite-jdbc 等第三方依赖各自的许可证不变，由 jpackage
+         收集在 runtime\legal\ 下随包分发。
+         ============================================================ -->
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <id>zengchen666</id>
+            <name>zengchen</name>
+            <url>https://github.com/zengchen666</url>
+        </developer>
+    </developers>
 
     <!-- ============================================================
          子模块列表。Maven 会按顺序到这些目录里找各自的 pom.xml，
@@ -141,10 +168,30 @@
                     </configuration>
                 </plugin>
 
+                <!--
+                  为什么要给测试单独加 enable-native-access=ALL-UNNAMED（前面两个连字符）：
+
+                  sqlite-jdbc 的测试会在临时目录里加载自带的 sqlitejdbc.dll，
+                  JDK 24+ 认为这属于「受限的本地方法调用」，会往 stderr 打四条 WARNING。
+                  这四条警告在 Maven 看来完全无害（BUILD SUCCESS、测试全绿），但在
+                  Windows PowerShell 里会被包成 NativeCommandError，于是整条命令的退出码
+                  被判成 1 —— 表现为「明明 BUILD SUCCESS，脚本却说失败」。
+
+                  这种假失败非常坑：它会让人误以为程序本身起不来，花大量时间去查
+                  一个根本不存在的问题。所以这里显式开一下，让警告根本不产生。
+                  （javafx-maven-plugin 那边已经用 options 加了同样的参数，
+                   但 surefire 是独立起 JVM 的，两边互不影响，必须各配一次。）
+
+                  注意：XML 注释里不能直接写连续两个连字符，上面刻意写了全角书名号与
+                  「前面两个连字符」的说明来代替，别顺手把它改回连写。
+                -->
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>${maven-surefire-plugin.version}</version>
+                    <configuration>
+                        <argLine>--enable-native-access=ALL-UNNAMED</argLine>
+                    </configuration>
                 </plugin>
             </plugins>
         </pluginManagement>
