@@ -15,9 +15,11 @@
 
 ## 这是什么
 
-**轻读阅读器**是一款面向中文小说场景的 Windows 桌面阅读器。它只做一件事——**把你电脑里那些 TXT / EPUB 变成真正好读的书**。
+**轻读阅读器**是一款面向中文小说场景的 Windows 桌面阅读器。它只做一件事——**把你电脑里那些 TXT 变成真正好读的书**。
 
 它完全离线运行，不需要注册账号，不联网也能用，没有广告。所有数据都存在你自己的电脑上。
+
+> **想直接用？** 去 [Releases](https://github.com/zengchen666/qingdu-reader/releases) 下载免安装绿色版（约 43 MB），解压后双击 `QingduReader.exe` 就行，**不需要安装 JDK**。
 
 ---
 
@@ -446,7 +448,7 @@ $b=[IO.File]::ReadAllBytes('dist\QingduReader\QingduReader.exe')
 
 ```bash
 # 克隆项目
-git clone <repository-url>
+git clone https://github.com/zengchen666/qingdu-reader.git
 cd qingdu-reader
 
 # 编译全部模块
@@ -669,7 +671,7 @@ java --module-path qingdu-desktop\target\package-stage\fx ^
 | 2 | 书库管理：书架、分组、搜索、书签备注、收藏夹监控、阅读时长 | 计划中 |
 | 3 | 沉浸体验：全屏阅读、自动滚动、行距 / 双栏 | 计划中 |
 | 4 | EPUB 支持：epub4j 解析、统一章节模型落地、图片处理 | 计划中 |
-| 5 | 打包发布：jlink + jpackage、安装包、GitHub Release | **进行中（绿色版已可用，安装包 / Release 待做）** |
+| 5 | 打包发布：jlink + jpackage、GitHub Release | **已完成（绿色版 + [v0.1.0 Release](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.1.0)；`.msi` 安装包待做）** |
 | 6 | 云端同步：Spring Boot 服务、账号、进度同步 | 远期 |
 | 7 | 扩展：全文搜索（SQLite FTS5）、听书、更多格式 | 远期 |
 
