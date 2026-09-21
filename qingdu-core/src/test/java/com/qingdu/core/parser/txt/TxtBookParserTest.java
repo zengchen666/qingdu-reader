@@ -153,6 +153,57 @@ class TxtBookParserTest {
     }
 
     @Test
+    @DisplayName("文件头里的《书名》短行会被认作书名，而不是退化成文件名")
+    void titleComesFromMarkedLineInHeader(@TempDir Path dir) throws Exception {
+        // 《元尊》的真实文件头：书名号单独成行，没有"书名："前缀
+        String content = "\n\n《元尊》\n作者：天蚕土豆\n内容简介：\n    " + BOOK_TEXT;
+        Path file = writeBook(dir, "01.txt", content, StandardCharsets.UTF_8);
+
+        assertEquals("元尊", parser.parseMetadata(file).title());
+    }
+
+    @Test
+    @DisplayName("同一行里混着括号注释和作者名时，只取书名号里的那截")
+    void titleTakesOnlyMarkedPartOfHeaderLine(@TempDir Path dir) throws Exception {
+        // 《全职高手》的真实文件头：书名号后面还跟着（精校版全本）作者蝴蝶蓝
+        String content = "\n《全职高手》（精校版全本）作者蝴蝶蓝\n\n全职高手\n作者：蝴蝶蓝\n\n"
+                + BOOK_TEXT;
+        Path file = writeBook(dir, "02.txt", content, StandardCharsets.UTF_8);
+
+        assertEquals("全职高手", parser.parseMetadata(file).title());
+    }
+
+    @Test
+    @DisplayName("『书名/作者:xxx』式的文件头，书名不会被作者部分污染")
+    void titleFromQuotedHeaderLine(@TempDir Path dir) throws Exception {
+        // 《武动乾坤》的真实文件头
+        String content = "『武动乾坤/作者:天蚕土豆』\n『状态:已完结』\n\n" + BOOK_TEXT;
+        Path file = writeBook(dir, "04.txt", content, StandardCharsets.UTF_8);
+
+        assertEquals("武动乾坤", parser.parseMetadata(file).title());
+    }
+
+    @Test
+    @DisplayName("元数据行『状态:已完结』不会被当书名（它在书名之后）")
+    void metadataLineIsNotTakenAsTitle(@TempDir Path dir) throws Exception {
+        // 顺序故意倒过来：状态行在前，靠"含冒号就否决"把第一行挡掉
+        String content = "『状态:已完结』\n『武动乾坤/作者:天蚕土豆』\n\n" + BOOK_TEXT;
+        Path file = writeBook(dir, "04.txt", content, StandardCharsets.UTF_8);
+
+        assertEquals("武动乾坤", parser.parseMetadata(file).title());
+    }
+
+    @Test
+    @DisplayName("正文里引述的书名不会被当书名 —— 那一行太长")
+    void longBodyLineWithBookMarkIsNotTitle(@TempDir Path dir) throws Exception {
+        String content = "他翻开那本已经读了很多年的旧书，封面上写着《星辰变》，作者是当年红极一时的作家，"
+                + "书页已经泛黄发脆，边角都卷起来了，可他还是舍不得扔。\n\n" + BOOK_TEXT;
+        Path file = writeBook(dir, "无名.txt", content, StandardCharsets.UTF_8);
+
+        assertEquals("无名", parser.parseMetadata(file).title(), "长行是正文，书名应退回文件名");
+    }
+
+    @Test
     @DisplayName("文件不存在时抛出带路径的业务异常")
     void missingFileThrows(@TempDir Path dir) {
         Path missing = dir.resolve("不存在.txt");
