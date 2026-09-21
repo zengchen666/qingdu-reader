@@ -58,8 +58,25 @@ public class TxtBookParser implements BookParser {
     /** 文件名里的括号注释，如"斗破苍穹（完结）"里的"（完结）"。 */
     private static final Pattern FILENAME_BRACKETS = Pattern.compile("[\\[【(（][^\\]】)）]{0,24}[\\]】)）]");
 
-    /** 作者名后面常见的分隔符，出现就截断。 */
-    private static final String AUTHOR_SEPARATORS = " \t\u3000|,，;；/-—（(【[";
+    /**
+     * 作者名后面常见的分隔符 / 噪声字符，出现就截断。
+     *
+     * <p><b>闭括号与闭引号必须在内。</b>有些文件头写成
+     * {@code 『武动乾坤/作者:天蚕土豆』} —— 作者名后面紧跟的是<b>闭</b>书名号。
+     * 早期版本只列了开括号和常见分隔符，于是提取出来的是 {@code 天蚕土豆』}，
+     * 那个多余的字符会一路显示到书架上。语料审计里《武动乾坤》就是这个症状。
+     *
+     * <p>刻意<b>不含</b>间隔号 {@code ·}：{@code 欧·亨利} 这类译名本身就带它，
+     * 列进来会把真实作者名截断。
+     */
+    private static final String AUTHOR_SEPARATORS = " \t\u3000|,，;；/-—（(【[]】)}）』」”’'\">》〉";
+
+    /** 文件名里残留的"作者xxx"尾巴，如"《全职高手》作者蝴蝶蓝"。 */
+    private static final Pattern FILENAME_AUTHOR_TAIL =
+            Pattern.compile("作\\s*者\\s*[:：]?\\s*[^\\r\\n]{0,12}$");
+
+    /** 成对包裹整个书名的装饰，用来剥掉"《元尊》"两侧的书名号。 */
+    private static final String BOOK_TITLE_MARKS = "《》『』“”‘’";
 
     /**
      * 文件名里的营销后缀，都是下载站加上的，不是书名。
@@ -139,9 +156,18 @@ public class TxtBookParser implements BookParser {
     /**
      * 从文件名推断书名。
      *
-     * <p>要处理三类噪声：扩展名、括号注释（"（完结）"）、营销后缀（"TXT下载"）。
-     * 这三样在下载站的资源里几乎是标配，不清掉的话书架上会显示成
-     * "斗破苍穹（全本完结）TXT下载"。
+     * <p>要处理四类噪声，它们在下载站的资源里几乎是标配，不清掉的话书架上会显示成
+     * {@code 《斗破苍穹》（精校版全本）作者天蚕土豆TXT下载}：
+     * <ol>
+     *   <li>扩展名；</li>
+     *   <li>括号注释（{@code （完结）}）与营销后缀（{@code TXT下载}）；</li>
+     *   <li>"作者xxx" 尾巴 —— 下载站常把作者名直接拼在书名后面；</li>
+     *   <li>包裹整个书名的书名号（{@code 《元尊》}）。</li>
+     * </ol>
+     *
+     * <p><b>顺序有讲究</b>：先剥括号再剪后缀，最后才剥书名号。
+     * 如果先剥书名号，{@code 《斗破苍穹》（精校版）} 中间的括号会把判断搞乱 ——
+     * 书名号必须"成对包裹整个字符串"才剥，这一点由 {@link #stripWrappingMarks} 保证。
      */
     private String cleanFileName(String fileName) {
         String name = fileName;
@@ -156,9 +182,40 @@ public class TxtBookParser implements BookParser {
                 name = name.substring(0, name.length() - suffix.length()).strip();
             }
         }
+        // "作者xxx" 尾巴。start() > 0 这个前提不能省：
+        // 否则《作者之死》这种书名会被整条当成作者信息删掉，只剩"未命名"。
+        Matcher authorTail = FILENAME_AUTHOR_TAIL.matcher(name);
+        if (authorTail.find() && authorTail.start() > 0) {
+            name = name.substring(0, authorTail.start()).strip();
+        }
         // 末尾可能还残留着分隔符，比如"斗破苍穹 -"
         name = name.replaceAll("[\\-—－_·]+$", "").strip();
+        name = stripWrappingMarks(name);
         return name.isEmpty() ? "未命名" : name;
+    }
+
+    /**
+     * 剥掉包裹整个书名的书名号与引号：{@code 《元尊》} → {@code 元尊}。
+     *
+     * <p><b>只剥"成对包裹整串"的。</b>{@code 重生之《红楼梦》} 里的书名号在中间，
+     * 它不是装饰而是书名的一部分，动了就把书名改坏了 —— 所以必须首尾同时匹配才剥，
+     * 并且支持嵌套写法 {@code 《『元尊』》}（逐层剥）。
+     */
+    private String stripWrappingMarks(String name) {
+        String result = name;
+        boolean changed = true;
+        while (changed && result.length() >= 2) {
+            changed = false;
+            for (int i = 0; i + 1 < BOOK_TITLE_MARKS.length(); i += 2) {
+                if (result.charAt(0) == BOOK_TITLE_MARKS.charAt(i)
+                        && result.charAt(result.length() - 1) == BOOK_TITLE_MARKS.charAt(i + 1)) {
+                    result = result.substring(1, result.length() - 1).strip();
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        return result;
     }
 
     /** 从文件头提取作者。找不到就返回 null —— 大量 TXT 小说确实没有作者信息。 */

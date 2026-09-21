@@ -116,6 +116,43 @@ class TxtBookParserTest {
     }
 
     @Test
+    @DisplayName("作者名后的闭书名号不会残留（真实文件头写成『书名/作者:xxx』）")
+    void authorNameStopsAtClosingBracket(@TempDir Path dir) throws Exception {
+        // 《武动乾坤》的文件头原文，闭书名号曾经被一起吃进作者名里
+        String content = "『测试之书/作者:天蚕土豆』\n\n" + BOOK_TEXT;
+        Path file = writeBook(dir, "test.txt", content, StandardCharsets.UTF_8);
+
+        Book book = parser.parseMetadata(file);
+
+        assertEquals("天蚕土豆", book.author());
+    }
+
+    @Test
+    @DisplayName("包裹整个书名的书名号会被剥掉")
+    void wrappingBookTitleMarksAreStripped(@TempDir Path dir) throws Exception {
+        Path file = writeBook(dir, "《元尊》.txt", BOOK_TEXT, StandardCharsets.UTF_8);
+
+        assertEquals("元尊", parser.parseMetadata(file).title());
+    }
+
+    @Test
+    @DisplayName("文件名里「作者xxx」的尾巴会被清掉，且书名号一并剥掉")
+    void authorTailInFileNameIsRemoved(@TempDir Path dir) throws Exception {
+        Path file = writeBook(dir, "《斗破苍穹》（精校版全本）作者天蚕土豆.txt",
+                BOOK_TEXT, StandardCharsets.UTF_8);
+
+        assertEquals("斗破苍穹", parser.parseMetadata(file).title());
+    }
+
+    @Test
+    @DisplayName("书名本身以「作者」开头时，不能整条被当成作者尾巴删掉")
+    void bookNameStartingWithAuthorIsKept(@TempDir Path dir) throws Exception {
+        Path file = writeBook(dir, "作者之死.txt", BOOK_TEXT, StandardCharsets.UTF_8);
+
+        assertEquals("作者之死", parser.parseMetadata(file).title());
+    }
+
+    @Test
     @DisplayName("文件不存在时抛出带路径的业务异常")
     void missingFileThrows(@TempDir Path dir) {
         Path missing = dir.resolve("不存在.txt");
