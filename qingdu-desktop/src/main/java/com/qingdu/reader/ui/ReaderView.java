@@ -317,6 +317,34 @@ public class ReaderView extends BorderPane {
 
     // ==================== 左侧面板 + 正文区 ====================
 
+    /**
+     * 判断这一章上方要不要插一行卷标题分组头，需要就返回那个 Label。
+     *
+     * <p>只在「本卷第一章」上方返回非空 —— 判据是本章带着卷名、
+     * 而上一章没带（或换了一个卷名）。同一卷的后续章节上方就不再重复。
+     *
+     * <p>为什么卷标题要做成"挂在章节上的分组头"而不是自己占一个目录条目？
+     * 因为卷标题这一"章"实际只有二十几个字节（就是标题那一行），
+     * 点进去是一片空白。《全职高手》原本就有 3 个这样的空条目。
+     * 分章器现在只把它作为分组信息挂到后面的章节上，目录这里再渲染出来。
+     *
+     * @param list  目录的数据源，用来回看上一章的卷名
+     * @param item  当前章
+     * @param index 当前章在列表中的位置
+     */
+    private static Label buildVolumeHeader(ListView<Chapter> list, Chapter item, int index) {
+        List<Chapter> items = list.getItems();
+        Chapter previous = (index > 0 && index - 1 < items.size()) ? items.get(index - 1) : null;
+        // 判断本身在 Chapter 上，那里有单元测试兜着 —— 界面这边只负责画出来
+        if (!item.startsNewVolume(previous)) {
+            return null;
+        }
+        Label header = new Label(item.volumeTitle());
+        header.getStyleClass().add("reader-volume-header");
+        header.setMaxWidth(Double.MAX_VALUE);
+        return header;
+    }
+
     private SplitPane buildCenter() {
         chapterList.getStyleClass().add("reader-list");
         chapterList.setCellFactory(list -> new ListCell<>() {
@@ -328,18 +356,39 @@ public class ReaderView extends BorderPane {
                     setGraphic(null);
                     return;
                 }
-                setText(item.title());
+
+                // 章节标题。用独立的 Label 而不是 cell 自身的 text，
+                // 是为了能在它上面叠一行卷标题分组头。
+                Label title = new Label(item.title());
+                title.getStyleClass().add("reader-chapter-label");
+                title.setMaxWidth(Double.MAX_VALUE);
+                HBox.setHgrow(title, Priority.ALWAYS);
+
+                HBox row = new HBox(title);
+                row.setAlignment(Pos.CENTER_LEFT);
+
                 // 有书签的章节在标题右边点一个小圆点。
-                // 用 setGraphic 而不是往文字里加符号，是为了让标记不影响
+                // 用独立节点而不是往文字里加符号，是为了让标记不影响
                 // 标题本身的省略号行为（长标题该截断还是截断）
                 if (bookmarkedChapters.contains(item.index())) {
                     Label flag = new Label("●");
                     flag.getStyleClass().add("reader-bookmark-flag");
-                    setGraphic(flag);
-                    setContentDisplay(ContentDisplay.RIGHT);
+                    row.getChildren().add(flag);
+                }
+
+                // 卷标题分组头：只在"本卷第一章"的上方插一行。
+                // 判据是本章带卷名、而上一章没带（或换了一个卷名）——
+                // 于是同一卷的后续章节上方不会再重复出现卷头。
+                Label volumeHeader = buildVolumeHeader(list, item, getIndex());
+
+                setText(null);
+                setContentDisplay(ContentDisplay.LEFT);
+                if (volumeHeader == null) {
+                    setGraphic(row);
                 } else {
-                    setGraphic(null);
-                    setContentDisplay(ContentDisplay.LEFT);
+                    VBox box = new VBox(2, volumeHeader, row);
+                    box.getStyleClass().add("reader-cell-box");
+                    setGraphic(box);
                 }
             }
         });

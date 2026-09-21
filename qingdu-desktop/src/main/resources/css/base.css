@@ -219,6 +219,38 @@
     -fx-text-fill: -qd-accent;
 }
 
+/* 目录里的卷标题分组头。只出现在"本卷第一章"的上方，
+   比章节标题弱一档：小一号字、淡色、下面一条细分隔线 ——
+   目的是让人一眼看出"从这里换卷了"，而不是跟章节标题抢注意力。 */
+.reader-volume-header {
+    -fx-font-size: 11px;
+    -fx-text-fill: -qd-text-faint;
+    -fx-padding: 4 0 3 0;
+    -fx-border-color: -qd-border;
+    -fx-border-width: 0 0 1 0;
+}
+
+/* 章节标题。改用独立 Label 之后不再继承 list-cell 的文字色，
+   普通态和选中态都得自己声明 —— 选中时列表底层色会变深，
+   不给 Label 单独设色就会变成"深底深字"。 */
+.reader-chapter-label {
+    -fx-text-fill: -qd-text;
+}
+
+.reader-list .list-cell:filled:selected .reader-chapter-label {
+    -fx-text-fill: -qd-selection-text;
+}
+
+.reader-list .list-cell:filled:selected .reader-volume-header {
+    -fx-text-fill: -qd-selection-text;
+    -fx-opacity: 0.8;
+}
+
+/* "卷头 + 章节标题"两行合在一个单元格里的外层容器 */
+.reader-cell-box {
+    -fx-padding: 1 0 1 0;
+}
+
 /* ===================== 正文区 ===================== */
 
 /* 滚动容器的底色是"面板层"：正文那条窄栏之外的部分就是它。
