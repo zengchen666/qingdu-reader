@@ -144,14 +144,15 @@ public class QingduApplication extends Application {
     }
 
     /**
-     * 处理启动参数。
+     * 处理启动参数：支持"拖一个 txt 到 exe 上"和"拖一个文件夹到 exe 上"。
      *
-     * <p>{@code getParameters().getRaw()} 拿到的是原始参数列表。
-     * 这里只取第一个能当文件路径用的参数 —— 多文件同时打开要等到
-     * 书架功能做好之后再说，现在做只会引入一堆"先开哪本"的判定逻辑。
+     * <p>只取第一个参数。多本书同时打开这件事现在<b>有了更好的入口</b> ——
+     * 把整个文件夹拖到 exe 上就会整批导进书库（见下面的目录分支），
+     * 而不是"同时开好几个窗口"。后者要处理"先开哪本""关掉一本之后显示什么"
+     * 一堆状态，对阅读器这个场景并不划算。
      *
-     * <p>整段用 try-catch 包住：启动参数来自外部，可能是任意字符串。
-     * 如果它不是合法路径，{@code Path.of} 会抛 InvalidPathException，
+     * <p>参数是文件就打开，是文件夹就导入，其它一律忽略。
+     * 整段用 try-catch 包住：启动参数来自外部，可能是任意字符串，
      * 而这里是在 {@code start()} 里调用的 —— 一旦抛出，整个窗口都起不来。
      * 参数错误只是一件小事，不值得让它升级成"程序打不开"。
      */
@@ -162,11 +163,13 @@ public class QingduApplication extends Application {
         }
         try {
             Path candidate = Path.of(args.get(0));
-            if (Files.isRegularFile(candidate)) {
+            if (Files.isDirectory(candidate)) {
+                readerView.importFolder(candidate);
+            } else if (Files.isRegularFile(candidate)) {
                 readerView.open(candidate);
             }
         } catch (RuntimeException e) {
-            System.err.println("启动参数不是有效的文件路径，已忽略：" + args.get(0));
+            System.err.println("启动参数不是有效的路径，已忽略：" + args.get(0));
         }
     }
 }

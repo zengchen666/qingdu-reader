@@ -19,6 +19,10 @@
     -qd-selection-text: #16301d;
     -qd-hover-bg:       #c5dfc8;
 
+    /* 绿底上配砖红。刻意避开正红：正红压在绿上会产生"圣诞配色"的错觉，
+       而且这个标记只是提示性的，不该抢走整个界面的注意力。 */
+    -qd-warn:           #a94438;
+
     /* 护眼主题里滑块偏"草绿"，不用纯灰 —— 灰色压在绿底上会显脏 */
     -qd-scroll-thumb:       #a9c6ad;
     -qd-scroll-thumb-hover: #8fb394;

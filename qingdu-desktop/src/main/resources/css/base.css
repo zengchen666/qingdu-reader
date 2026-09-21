@@ -33,6 +33,11 @@
     -qd-selection-text: #14314f;
     -qd-hover-bg:       #e8e5dc;
 
+    /* 需要"提个醒"的颜色（目前只用在书架的"文件缺失"上）。
+       和 -qd-accent 分开是有意的：强调色代表"可点的、正向的"，
+       这个代表"出问题了"，混用会让两种语义分不开。 */
+    -qd-warn:           #b4534b;
+
     -qd-scroll-thumb:       #cfcabb;
     -qd-scroll-thumb-hover: #b3ad9c;
 }
@@ -297,22 +302,130 @@
     -fx-text-fill: -qd-text-faint;
 }
 
-/* 欢迎页 */
-.reader-welcome-title {
-    -fx-font-size: 34px;
+/* ===================== 书架 ===================== */
+
+/* 没有打开书的时候，整个中心区就是它。
+   底色用 window-bg（"桌面"层）、卡片用 panel-bg（"面板"层）——
+   和正文 / 侧栏是同一套三层表面的思路：卡片要浮在底上才看得出是卡片。 */
+.bookshelf {
+    -fx-background-color: -qd-window-bg;
+}
+
+.bookshelf-header {
+    -fx-background-color: -qd-panel-bg;
+    -fx-border-color: -qd-border;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 12 18 12 18;
+}
+
+.bookshelf-title {
+    -fx-font-size: 18px;
     -fx-font-weight: bold;
     -fx-text-fill: -qd-text-heading;
 }
 
-.reader-welcome-subtitle {
-    -fx-font-size: 15px;
+.bookshelf-count {
+    -fx-font-size: 12px;
     -fx-text-fill: -qd-text-muted;
 }
 
-.reader-welcome-hint {
+/* 滚动容器透明，让底下的 window-bg 透上来 —— 否则会出现"一块白" */
+.bookshelf-scroll {
+    -fx-background-color: transparent;
+    -fx-border-width: 0;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
+.bookshelf-scroll > .viewport {
+    -fx-background-color: transparent;
+}
+
+.bookshelf-grid {
+    -fx-background-color: transparent;
+}
+
+/* ---- 书卡 ---- */
+
+.book-card {
+    -fx-background-color: -qd-panel-bg;
+    -fx-background-radius: 8;
+    -fx-padding: 10;
+    -fx-cursor: hand;
+}
+
+.book-card:hover {
+    -fx-background-color: -qd-hover-bg;
+}
+
+.book-card-title {
     -fx-font-size: 13px;
-    -fx-text-fill: -qd-text-faint;
-    -fx-text-alignment: center;
+    -fx-text-fill: -qd-text-heading;
+}
+
+.book-card-meta {
+    -fx-font-size: 11px;
+    -fx-text-fill: -qd-text-muted;
+}
+
+.book-card-progress {
+    -fx-font-size: 11px;
+    -fx-text-fill: -qd-accent;
+}
+
+/* 文件已经不在了。用 -qd-warn 而不是 -qd-accent：
+   强调色是"可点的"，这里要表达的是"出问题了"，两种语义不能混。 */
+.book-card-missing {
+    -fx-font-size: 11px;
+    -fx-text-fill: -qd-warn;
+}
+
+/* ---- 占位封面 ----
+
+   TXT 小说没有封面图，所以书架上绝大多数格子走的是这一支：
+   一块圆角底 + 一个"摊开的书"轮廓。
+
+   轮廓用 -fx-shape 描述而不是贴一张 PNG —— 这是关键：
+   颜色因此可以写成 -qd-text-faint，跟着主题一起变。
+   换成图片的话，四套主题得各出一张，而且夜间主题下必然出现一块白斑。
+
+   区域尺寸给的是 80×66，正好等于路径自身的坐标范围
+   （x 从 10 到 90、y 从 6 到 72）。给足了就不会被裁掉一角，
+   而且无论 -fx-scale-shape 取默认的哪个值，显示结果都一样。 */
+.book-cover-placeholder {
+    -fx-background-color: -qd-panel-subtle;
+    -fx-background-radius: 6;
+    -fx-border-color: -qd-border;
+    -fx-border-radius: 6;
+    -fx-border-width: 1;
+}
+
+.book-cover-glyph {
+    -fx-shape: "M50 16 C42 8 24 6 10 8 V64 C24 62 42 64 50 72 C58 64 76 62 90 64 V8 C76 6 58 8 50 16 Z";
+    -fx-background-color: -qd-text-faint;
+    -fx-min-width: 80px;
+    -fx-pref-width: 80px;
+    -fx-max-width: 80px;
+    -fx-min-height: 66px;
+    -fx-pref-height: 66px;
+    -fx-max-height: 66px;
+}
+
+/* ---- 空书架：新用户看到的第一个界面，引导要一眼看明白 ---- */
+
+.bookshelf-empty {
+    -fx-padding: 40;
+}
+
+.bookshelf-empty-title {
+    -fx-font-size: 20px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -qd-text-heading;
+}
+
+.bookshelf-empty-hint {
+    -fx-font-size: 13px;
+    -fx-text-fill: -qd-text-muted;
 }
 
 /* ===================== 全书进度条 ===================== */

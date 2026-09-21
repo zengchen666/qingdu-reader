@@ -8,7 +8,7 @@
     <parent>
         <groupId>com.qingdu</groupId>
         <artifactId>qingdu-reader</artifactId>
-        <version>0.1.0-SNAPSHOT</version>
+        <version>0.1.1-SNAPSHOT</version>
     </parent>
 
     <artifactId>qingdu-desktop</artifactId>
@@ -37,6 +37,15 @@
         <dependency>
             <groupId>org.openjfx</groupId>
             <artifactId>javafx-fxml</artifactId>
+        </dependency>
+
+        <!-- 单元测试。桌面端里只有"不碰界面"的那部分逻辑值得测
+             （比如导入文件夹的扫描与判重），所以这个依赖和 JavaFX 无关 ——
+             测试跑起来不需要图形环境，CI 和本机命令行都能跑 -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 

@@ -9,6 +9,7 @@ import com.qingdu.core.parser.BookParseException;
 import com.qingdu.core.parser.txt.TxtBookParser;
 import com.qingdu.core.parser.txt.TxtChapterSplitter;
 import com.qingdu.core.text.CharsetDetector;
+import com.qingdu.reader.library.BookImporter;
 import com.qingdu.store.QingduStore;
 import com.qingdu.store.StoreException;
 import com.qingdu.store.model.Bookmark;
@@ -47,7 +48,9 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
+import javafx.stage.Stage;
 import javafx.stage.Window;
 import javafx.util.Duration;
 
@@ -81,6 +84,17 @@ import java.util.Set;
  *   └──────────────────────────────────────────┘
  * </pre>
  *
+ * <p><b>中间那块有两种形态，二选一：</b>
+ * <ul>
+ *   <li><b>书架态</b>（没有打开书）—— 整个中心区是一面封面墙，见
+ *       {@link BookshelfView}。此时左侧的「目录 / 书签」栏<b>整个不在</b>：
+ *       两个空列表看起来像坏了，而不是"还没有书"。书名条和状态栏也一并复位。</li>
+ *   <li><b>阅读态</b>（打开了书）—— 就是上面那张图。</li>
+ * </ul>
+ * 两者挂在同一个 {@code BorderPane} 的 center 上互相替换。
+ * 之所以整块换而不是只换正文：版心那条"纸"的宽度是按"一行 34 个字"算死的，
+ * 书架需要的是撑满窗口的宽度，两者没法共用同一个容器。
+ *
  * <p>界面上只有两种底色：左侧/上下是"面板"，中间那条窄栏是"纸"。
  * 正文的纸不铺满窗口宽度，而是按"一行 34 个字"算出来固定住 ——
  * 一行太长的中文读起来会频繁串行，所以宁可两边留白。
@@ -103,6 +117,15 @@ public class ReaderView extends BorderPane {
 
     /** 「最近打开」菜单最多列几本。 */
     private static final int RECENT_LIMIT = 12;
+
+    /**
+     * 导入失败时，明细最多列几条。
+     *
+     * <p>一个装满损坏文件的文件夹可能失败几百次，全塞进对话框就是一面墙。
+     * 与其把界面撑爆，不如只给最前面的几条看看是什么毛病 ——
+     * 剩下的失败原因通常是一样的。
+     */
+    private static final int MAX_FAILURE_LINES = 8;
 
     /**
      * 版心里一行放多少个字。
@@ -156,6 +179,18 @@ public class ReaderView extends BorderPane {
     private final Menu themeMenu = new Menu("主题");
     private final ToggleGroup themeGroup = new ToggleGroup();
 
+    /**
+     * 阅读态的整个中心区（左侧「目录 / 书签」+ 右边正文）。
+     *
+     * <p>它和 {@link #bookshelf} 是"中心区"的两种形态，二选一挂上去。
+     * 之所以整块换，而不是只换正文：书架上不该出现一个空的目录栏 ——
+     * 那看起来像坏了，而不是"还没有书"。
+     */
+    private SplitPane readerPane;
+
+    /** 书架态。没有打开书时中心区显示的是它。 */
+    private BookshelfView bookshelf;
+
     // ==================== 阅读状态 ====================
 
     private Path currentFile;
@@ -196,10 +231,34 @@ public class ReaderView extends BorderPane {
         buildThemeMenu();
 
         getStyleClass().add("reader-window");
+        readerPane = buildCenter();
         setTop(buildTop());
-        setCenter(buildCenter());
         setBottom(buildStatusBar());
-        showWelcome();
+
+        // 书架的动作全部回调到本类：弹框要跟主题换肤、移除要删数据，
+        // 那两件事都只有这里做得对（BookshelfView 的类注释里有说明）
+        bookshelf = new BookshelfView(store, new BookshelfView.Actions() {
+            @Override
+            public void open(Book book) {
+                openLibraryBook(book);
+            }
+
+            @Override
+            public void chooseFile() {
+                chooseAndOpen();
+            }
+
+            @Override
+            public void importFolder() {
+                chooseAndImportFolder();
+            }
+
+            @Override
+            public void remove(Book book) {
+                removeFromShelf(book);
+            }
+        });
+        showBookshelf();
 
         progressDebounce.setOnFinished(e -> persistProgress());
         // 滚动位置变化 → 延迟写库。用户拖动滚动条时这里会连续触发，
@@ -235,6 +294,10 @@ public class ReaderView extends BorderPane {
         openItem.setAccelerator(KeyCombination.keyCombination("Shortcut+O"));
         openItem.setOnAction(e -> chooseAndOpen());
 
+        MenuItem importItem = new MenuItem("导入文件夹…");
+        importItem.setAccelerator(KeyCombination.keyCombination("Shortcut+Shift+O"));
+        importItem.setOnAction(e -> chooseAndImportFolder());
+
         MenuItem closeItem = new MenuItem("关闭当前书籍");
         closeItem.setOnAction(e -> closeBook());
 
@@ -248,7 +311,7 @@ public class ReaderView extends BorderPane {
         });
 
         Menu fileMenu = new Menu("文件", null,
-                openItem, recentMenu, new SeparatorMenuItem(), closeItem,
+                openItem, importItem, recentMenu, new SeparatorMenuItem(), closeItem,
                 new SeparatorMenuItem(), exitItem);
 
         Menu bookmarkMenu = new Menu("书签", null, buildBookmarkMenuItems());
@@ -585,28 +648,29 @@ public class ReaderView extends BorderPane {
         return label;
     }
 
-    /** 没有打开书籍时的欢迎页。 */
-    private void showWelcome() {
-        Label title = new Label("轻读阅读器");
-        title.getStyleClass().add("reader-welcome-title");
+    /**
+     * 切到书架态。
+     *
+     * <p>没有打开任何书的时候，主界面是书架，而不是一张写死的欢迎页。
+     * 理由很实际：用户第二次打开程序时想看的是"我上次读到哪本了"，
+     * 一句"按 Ctrl+O 打开文件"对他是零信息量的；而对第一次用的人，
+     * 书架的空状态里本来就有引导和按钮，并不比欢迎页差。
+     *
+     * <p>它同时负责把"书籍信息条"和状态栏恢复成无书的样子 ——
+     * 否则关掉一本书之后，上一本的书名还会赖在上面。
+     */
+    private void showBookshelf() {
+        setCenter(bookshelf);
+        bookshelf.refresh();
 
-        Label subtitle = new Label("轻量化的中文小说阅读器");
-        subtitle.getStyleClass().add("reader-welcome-subtitle");
-
-        Label hint = new Label("按 Ctrl + O 打开本地 TXT 文件\n"
-                + "自动识别 GBK / UTF-8 编码，自动切分章节\n"
-                + "阅读进度与书签会自动保存");
-        hint.getStyleClass().add("reader-welcome-hint");
-        hint.setPadding(new Insets(20, 0, 0, 0));
-
-        VBox box = new VBox(10, title, subtitle, hint);
-        box.setAlignment(Pos.CENTER);
-        contentBox.setAlignment(Pos.CENTER);
-        contentBox.getChildren().setAll(box);
-
-        // 欢迎页没有"读到哪"这回事，进度条和全书百分比都该收起来
+        bookTitleLabel.setText("轻读阅读器");
+        bookMetaLabel.setText(store == null
+                ? "本地数据存储未启用：本次阅读不会被记录"
+                : "点击一本书打开    ·    「文件 → 导入文件夹…」批量添加");
+        statusLabel.setText("就绪");
         setStatusProgressVisible(false);
         statusProgressLabel.setText("");
+        applyWindowTitle();
     }
 
     // ==================== 打开一本书 ====================
@@ -621,6 +685,144 @@ public class ReaderView extends BorderPane {
         File chosen = chooser.showOpenDialog(windowOrNull());
         if (chosen != null) {
             open(chosen.toPath());
+        }
+    }
+
+    // ==================== 书架与批量导入 ====================
+
+    /** 弹出文件夹选择框，选中后整个导入。 */
+    private void chooseAndImportFolder() {
+        if (store == null) {
+            statusLabel.setText("导入功能不可用：本地数据库没有打开");
+            return;
+        }
+        DirectoryChooser chooser = new DirectoryChooser();
+        chooser.setTitle("选择装着 TXT 小说的文件夹");
+        File folder = chooser.showDialog(windowOrNull());
+        if (folder != null) {
+            importFolder(folder.toPath());
+        }
+    }
+
+    /**
+     * 把一个文件夹里的 TXT 全部登记进书库。
+     *
+     * <p>和 {@link #open(Path)} 一样放后台线程，理由也一样：
+     * 扫一个装满小说的文件夹要读几百个文件的头、查几百次库，
+     * 放在应用线程里界面会僵住。这里比打开单本书更明显 ——
+     * 用户点的动作是"导入一个文件夹"，天然预期要等一下，
+     * 但"等一下"应该是状态栏在变，而不是窗口点不动。
+     *
+     * <p>顺带说明：导入<b>不建章节索引</b>，所以它和书的体积无关。
+     * 细节见 {@link BookImporter} 的类注释。
+     *
+     * @param folder 要导入的文件夹
+     */
+    public void importFolder(Path folder) {
+        if (store == null) {
+            statusLabel.setText("导入功能不可用：本地数据库没有打开");
+            return;
+        }
+        statusLabel.setText("正在扫描：" + folder.getFileName() + " …");
+
+        BookImporter importer = new BookImporter(store);
+        Task<BookImporter.Report> task = new Task<>() {
+            @Override
+            protected BookImporter.Report call() {
+                return importer.importFolder(folder);
+            }
+        };
+        task.setOnSucceeded(event -> {
+            BookImporter.Report report = task.getValue();
+            bookshelf.refresh();
+            reloadRecentMenu();
+            showImportReport(report);
+        });
+        task.setOnFailed(event -> {
+            statusLabel.setText("导入失败");
+            showError("导入文件夹失败", task.getException());
+        });
+
+        Thread worker = new Thread(task, "qingdu-importer");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /** 导入结束后给个交代：状态栏一句话汇总；有失败才弹框说明是哪些文件。 */
+    private void showImportReport(BookImporter.Report report) {
+        statusLabel.setText(report.summary());
+        if (report.failures().isEmpty()) {
+            return;
+        }
+        Alert alert = themedAlert(Alert.AlertType.WARNING);
+        alert.setHeaderText(report.summary());
+        alert.setContentText("下面这些文件没能导入：\n\n" + failureLines(report.failures()));
+        alert.showAndWait();
+    }
+
+    private static String failureLines(List<String> failures) {
+        if (failures.size() <= MAX_FAILURE_LINES) {
+            return String.join("\n", failures);
+        }
+        List<String> head = failures.subList(0, MAX_FAILURE_LINES);
+        return String.join("\n", head)
+                + "\n…… 还有 " + (failures.size() - MAX_FAILURE_LINES) + " 个";
+    }
+
+    /**
+     * 打开书架（或「最近打开」）里的一本书，先确认文件还在。
+     *
+     * <p>这两个入口是同一件事 —— 都是"打开一本已经在库里的书"，
+     * 所以共用同一段逻辑：文件没了就给出解释并提供"移除记录"的选项，
+     * 而不是让解析器抛一句"文件不存在"了事。
+     */
+    private void openLibraryBook(Book book) {
+        Path path = book.filePath();
+        if (path == null || !Files.isRegularFile(path)) {
+            promptMissingBook(book);
+            return;
+        }
+        open(path);
+    }
+
+    /** 文件已经不在了：说清楚原位置，并给一个"从书架移除"的选择。 */
+    private void promptMissingBook(Book book) {
+        Alert alert = themedAlert(Alert.AlertType.CONFIRMATION);
+        alert.setHeaderText("找不到这本书了");
+        alert.setContentText("《" + book.title() + "》原来的位置是：\n"
+                + book.filePath() + "\n\n文件可能被移动、改名或删除了。\n"
+                + "要把这条记录从书架里移除吗？");
+        Optional<ButtonType> choice = alert.showAndWait();
+        if (choice.isPresent() && choice.get() == ButtonType.OK) {
+            forgetBook(book);
+        }
+    }
+
+    /** 从书架移除一本书（会连带删掉它的进度和书签，靠外键级联）。 */
+    private void removeFromShelf(Book book) {
+        Alert alert = themedAlert(Alert.AlertType.CONFIRMATION);
+        alert.setHeaderText("把《" + book.title() + "》从书架移除？");
+        alert.setContentText("这本书的阅读进度和书签会一起删掉。\n"
+                + "书文件本身不会被删除。");
+        Optional<ButtonType> choice = alert.showAndWait();
+        if (choice.isEmpty() || choice.get() != ButtonType.OK) {
+            return;
+        }
+        forgetBook(book);
+    }
+
+    /** 真正执行删除 + 刷新所有显示着这本书的地方。 */
+    private void forgetBook(Book book) {
+        if (store == null) {
+            return;
+        }
+        try {
+            store.books().forget(book.id());
+            bookshelf.refresh();
+            reloadRecentMenu();
+            statusLabel.setText("已从书架移除：" + book.title());
+        } catch (StoreException e) {
+            showError("移除失败", e);
         }
     }
 
@@ -691,8 +893,12 @@ public class ReaderView extends BorderPane {
         chapters = result.report().chapters();
         currentChapterIndex = -1;
 
+        // 数据齐了才把中心区切回阅读态。切早了会先闪一下空白的目录栏
+        setCenter(readerPane);
+
         bookTitleLabel.setText(currentBook.title());
         bookMetaLabel.setText(buildBookMeta(result));
+        applyWindowTitle();
 
         // 【顺序很重要】必须先读出上次的进度，再写书目信息。
         // 反过来的话，写入时的"默认进度"（第 0 章、0%）会把已存的位置覆盖掉，
@@ -733,7 +939,7 @@ public class ReaderView extends BorderPane {
                 + "（" + result.detection().reason() + "）";
     }
 
-    /** 关掉当前书，回到欢迎页。 */
+    /** 关掉当前书，回到书架。 */
     public void closeBook() {
         persistProgress();
         currentFile = null;
@@ -743,10 +949,10 @@ public class ReaderView extends BorderPane {
         bookmarkedChapters.clear();
         chapterList.getItems().clear();
         bookmarkList.getItems().clear();
-        bookTitleLabel.setText("轻读阅读器");
-        bookMetaLabel.setText("从菜单「文件 → 打开本地 TXT」开始阅读");
-        statusLabel.setText("就绪");
-        showWelcome();
+        contentBox.getChildren().clear();
+        // 「无书时界面长什么样」只在 showBookshelf() 里定义一次，
+        // 这里不重复设置书名条和状态栏 —— 两处各写一份，早晚会走散
+        showBookshelf();
         reloadRecentMenu();
     }
 
@@ -1173,33 +1379,15 @@ public class ReaderView extends BorderPane {
     }
 
     /**
-     * 打开"最近打开"里的一项。
+     * 打开「最近打开」里的一项。
      *
-     * <p>要处理"文件已经不在了"这种情况 —— 移动硬盘没插、文件被删、
-     * 目录被重命名都会导致它发生。这时给用户一个明确的选择
-     * （保留记录 / 移除记录），比自己悄悄失败要好得多。
+     * <p>它和点击书架卡片是同一件事 —— 都是"打开一本已经在库里的书"，
+     * 所以共用 {@link #openLibraryBook(Book)}：文件已经不在了的话，
+     * 那里会给出解释并提供"移除记录"的选择，而不是让解析器抛一句
+     * "文件不存在"了事。移动硬盘没插、文件被删、目录被重命名都会走到那条路。
      */
     private void openRecent(RecentBook recent) {
-        Path path = recent.book().filePath();
-        if (path == null || !Files.isRegularFile(path)) {
-            Alert alert = themedAlert(Alert.AlertType.CONFIRMATION);
-            alert.setHeaderText("找不到这本书了");
-            alert.setContentText("《" + recent.book().title() + "》原来的位置是：\n"
-                    + path + "\n\n文件可能被移动、改名或删除了。\n"
-                    + "要把这条记录从「最近打开」里移除吗？");
-            Optional<ButtonType> choice = alert.showAndWait();
-            if (choice.isPresent() && choice.get() == ButtonType.OK && store != null) {
-                try {
-                    store.books().forget(recent.book().id());
-                    reloadRecentMenu();
-                    statusLabel.setText("已移除记录：" + recent.book().title());
-                } catch (StoreException e) {
-                    showError("移除记录失败", e);
-                }
-            }
-            return;
-        }
-        open(path);
+        openLibraryBook(recent.book());
     }
 
     private void clearRecent() {
@@ -1252,7 +1440,7 @@ public class ReaderView extends BorderPane {
 
     private void showAbout() {
         Alert alert = themedAlert(Alert.AlertType.INFORMATION);
-        alert.setHeaderText("轻读阅读器 0.1.0");
+        alert.setHeaderText("轻读阅读器 0.1.1");
         alert.setContentText("""
                 一个本地优先的中文小说阅读器。
 
@@ -1277,6 +1465,25 @@ public class ReaderView extends BorderPane {
     }
 
     // ==================== 小工具 ====================
+
+    /**
+     * 把当前书名写进窗口标题。
+     *
+     * <p>任务栏和 Alt-Tab 里显示的是窗口标题。开着好几本书（或者一边开着
+     * 阅读器一边开着别的程序）的时候，"轻读阅读器"这四个字无法区分谁是谁，
+     * 带上书名才能一眼认出来。
+     *
+     * <p>取不到窗口（构造阶段还没 Scene）就静默跳过 —— 这只是个锦上添花的信息，
+     * 不值得为它抛异常。
+     */
+    private void applyWindowTitle() {
+        Window window = windowOrNull();
+        if (window instanceof Stage stage) {
+            stage.setTitle(currentBook == null
+                    ? "轻读阅读器"
+                    : currentBook.title() + " — 轻读阅读器");
+        }
+    }
 
     private Window windowOrNull() {
         return getScene() == null ? null : getScene().getWindow();

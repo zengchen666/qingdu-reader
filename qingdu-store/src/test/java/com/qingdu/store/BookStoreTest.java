@@ -152,6 +152,40 @@ class BookStoreTest {
     }
 
     @Test
+    @DisplayName("list() 列出全部图书，不受 recent 的条数上限约束")
+    void listIsUnlimited() {
+        for (int i = 0; i < 20; i++) {
+            books.save(book("b" + i, "书" + i), 3, progress("b" + i, 1, 0, 1_000L + i));
+        }
+
+        assertEquals(BookStore.DEFAULT_RECENT_LIMIT, books.recent(0).size(),
+                "recent 传 0 时按默认上限来");
+        assertEquals(20, books.list().size(), "书架要的是全部，不是前 12 本");
+    }
+
+    @Test
+    @DisplayName("list() 里能直接拿到每本书的进度，不用再查一次")
+    void listCarriesProgress() {
+        books.save(book("b1", "星尘纪"), 8, progress("b1", 4, 0.6, 1_000L));
+
+        RecentBook item = books.list().get(0);
+
+        assertEquals("星尘纪", item.book().title());
+        assertEquals(4, item.progress().chapterIndex());
+        assertEquals(0.6, item.progress().scrollRatio(), 1e-9);
+    }
+
+    @Test
+    @DisplayName("list() 和 recent() 的排序口径一致：最近读的在前")
+    void listSharesOrderingWithRecent() {
+        books.save(book("old", "旧书"), 3, progress("old", 1, 0, 1_000L));
+        books.save(book("new", "新书"), 3, progress("new", 1, 0, 3_000L));
+
+        assertEquals(books.recent(10).stream().map(r -> r.book().title()).toList(),
+                books.list().stream().map(r -> r.book().title()).toList());
+    }
+
+    @Test
     @DisplayName("还没开始读的书，describe 里说的是「尚未开始阅读」")
     void describeForUnstartedBook() {
         books.save(book("b1", "星尘纪"), 8, progress("b1", 0, 0, 1_000L));

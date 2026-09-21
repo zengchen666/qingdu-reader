@@ -19,6 +19,10 @@
     -qd-selection-text: #3a2d14;
     -qd-hover-bg:       #ece0c6;
 
+    /* 米黄底上偏棕的红。要和羊皮纸的暖调同色温 ——
+       用中性红会显得像"贴上去的标签"，而不是这页纸上的东西。 */
+    -qd-warn:           #a84c3a;
+
     /* 羊皮纸主题的滑块用偏棕的米色，和正文的棕调文字保持同一个色温 */
     -qd-scroll-thumb:       #d0bf98;
     -qd-scroll-thumb-hover: #bdaa79;

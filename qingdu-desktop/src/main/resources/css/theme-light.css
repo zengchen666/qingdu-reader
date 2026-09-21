@@ -18,6 +18,10 @@
     -qd-selection-text: #14314f;
     -qd-hover-bg:       #e8e5dc;
 
+    /* "出问题了"的提示色（书架上的"文件缺失"）。比 accent 更暖、更沉，
+       在米白底上看得清，又不至于像纯红那样跳。 */
+    -qd-warn:           #b4534b;
+
     /* 滚动条滑块。压在 -qd-panel-bg 上，要沉下去一点才看得出来，
        所以取的是比面板更深的暖灰，而不是面板本身的色阶 */
     -qd-scroll-thumb:       #cfcabb;

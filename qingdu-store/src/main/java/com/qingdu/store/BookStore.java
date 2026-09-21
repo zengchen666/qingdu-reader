@@ -177,19 +177,38 @@ public class BookStore {
             ps.setInt(1, effectiveLimit);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    Book book = mapBook(rs);
-                    ReadingProgress progress = new ReadingProgress(
-                            book.id(),
-                            rs.getInt("last_chapter_index"),
-                            rs.getString("last_chapter_title"),
-                            rs.getDouble("last_scroll_ratio"),
-                            rs.getLong("last_read_at"));
-                    result.add(new RecentBook(book, progress));
+                    result.add(mapRecent(rs));
                 }
             }
             return result;
         } catch (SQLException e) {
             throw new StoreException("查询最近打开失败：" + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 书库里的全部图书，最近读（或最近入库）的排在前面。
+     *
+     * <p>和 {@link #recent} 的区别只有一个：<b>不设条数上限</b>。
+     * 之所以单独给一个方法而不是让调用方传 {@code Integer.MAX_VALUE}：
+     * "最近打开的 12 本"和"书架上所有的书"是两件不同的事，
+     * 前者是菜单，后者是书架 —— 混用一个 API 会让后来改的人以为它们是一回事。
+     *
+     * <p>排序沿用 {@code last_read_at}：导入一本书时会顺手记一次"当前时间"，
+     * 所以刚导入的书会浮到最前面，正好是用户想看到的位置。
+     */
+    public List<RecentBook> list() {
+        String sql = "SELECT * FROM book ORDER BY last_read_at DESC";
+        List<RecentBook> result = new ArrayList<>();
+        try (Connection conn = database.connection();
+             PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                result.add(mapRecent(rs));
+            }
+            return result;
+        } catch (SQLException e) {
+            throw new StoreException("读取书架失败：" + e.getMessage(), e);
         }
     }
 
@@ -229,6 +248,24 @@ public class BookStore {
     }
 
     // ==================== 行 → 对象 ====================
+
+    /**
+     * 一行 → 一本书 + 它的阅读位置。
+     *
+     * <p>{@code recent()} 和 {@code list()} 取的是同一张表的全部列、映射方式完全一样，
+     * 只有"要不要 LIMIT"这一处差别。抽出来是为了让这两处的字段对应关系<b>只有一份</b> ——
+     * 以后给 book 表加列时，不会出现"书架上有、最近打开里没有"这种不一致。
+     */
+    private RecentBook mapRecent(ResultSet rs) throws SQLException {
+        Book book = mapBook(rs);
+        ReadingProgress progress = new ReadingProgress(
+                book.id(),
+                rs.getInt("last_chapter_index"),
+                rs.getString("last_chapter_title"),
+                rs.getDouble("last_scroll_ratio"),
+                rs.getLong("last_read_at"));
+        return new RecentBook(book, progress);
+    }
 
     private Book mapBook(ResultSet rs) throws SQLException {
         long addedAt = rs.getLong("added_at");
