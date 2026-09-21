@@ -71,6 +71,54 @@ class ChapterTitleMatcherTest {
             assertFalse(v.match().numbered(), "特殊章名不带编号");
         }
 
+        @ParameterizedTest(name = "\"{0}\" → 第 {1} 章")
+        @CsvSource({
+                // 真实语料里出现过的、章节名以感叹号/问号结尾的写法
+                "'第007章  休！', 7",
+                "'第009章  药老！', 9",
+                "'第050章  帮？', 50",
+                "'第三十八章 输出是什么？', 38",
+                "'第三十九章地元境！', 39",
+                "'第三百五十七章 突破，实境中期！', 357"
+        })
+        @DisplayName("章节名以感叹号/问号结尾 —— 这是作者起名的习惯，必须认出来")
+        void titleEndingWithExclamationOrQuestion(String line, int expectedNumber) {
+            Verdict v = ChapterTitleMatcher.inspect(line);
+
+            assertTrue(v.accepted(), () -> "应该被接受，但被拒绝：" + v.reason());
+            assertEquals(expectedNumber, v.match().number());
+        }
+
+        @ParameterizedTest(name = "\"{0}\" → 第 {1} 章")
+        @CsvSource({
+                // 章节名首字是「过 / 是 / 了」这类字，曾被虚词黑名单误杀
+                "'第四百九十章 过三关', 490",
+                "'第八十一章 是福是祸', 81",
+                "'第七百五十五章 了不起的新人', 755"
+        })
+        @DisplayName("章节名以「过 / 是 / 了」等字开头 —— 不能当成虚词误杀")
+        void titleStartingWithNonParticle(String line, int expectedNumber) {
+            Verdict v = ChapterTitleMatcher.inspect(line);
+
+            assertTrue(v.accepted(), () -> "应该被接受，但被拒绝：" + v.reason());
+            assertEquals(expectedNumber, v.match().number());
+        }
+
+        @ParameterizedTest(name = "\"{0}\" → 第 {1} 章")
+        @CsvSource({
+                // 引号/书名号是章节名的常用装饰，不是"这是一句话"的标志
+                "'第二十九章 “首杀队”', 29",
+                "'第三章 【觉醒】', 3",
+                "'第五章 《大结局》', 5"
+        })
+        @DisplayName("章节名以引号或括号开头 —— 应视为装饰而不是正文标志")
+        void titleStartingWithQuotesOrBrackets(String line, int expectedNumber) {
+            Verdict v = ChapterTitleMatcher.inspect(line);
+
+            assertTrue(v.accepted(), () -> "应该被接受，但被拒绝：" + v.reason());
+            assertEquals(expectedNumber, v.match().number());
+        }
+
         @Test
         @DisplayName("带编号的特殊章名，如「番外三」")
         void numberedSpecialForm() {
@@ -117,11 +165,26 @@ class ChapterTitleMatcherTest {
         @ValueSource(strings = {
                 "第一章写得很精彩。",
                 "第三章，结局是什么？",
-                "第二章 他到底想说什么！",
                 "第四章……后来呢"
         })
         @DisplayName("含句末标点的行要拒绝")
         void bodyTextWithSentenceEnding(String line) {
+            Verdict v = ChapterTitleMatcher.inspect(line);
+
+            assertFalse(v.accepted(), () -> "不该接受：" + line);
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {
+                "第二章 他到底想说什么！他其实早就知道了",
+                "第五十章 这就完了？我不信",
+                "第一百章 结束了。",
+                "第六百章 真的吗；"
+        })
+        @DisplayName("句末标点拖在中间 —— 这是句子，不是标题")
+        void sentenceEndingInTheMiddle(String line) {
+            // 注意：感叹号/问号「收尾」是允许的（见 Accepted 组），
+            // 只有出现在中间、后面还跟着内容时才判定为正文。
             Verdict v = ChapterTitleMatcher.inspect(line);
 
             assertFalse(v.accepted(), () -> "不该接受：" + line);

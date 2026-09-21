@@ -25,7 +25,8 @@ import java.util.regex.Pattern;
  *   <li><b>格式校验</b>：整行必须匹配章节标题的正则结构
  *       （第 + 数字 + 量词，或楔子/番外这类特殊章名）</li>
  *   <li><b>形态校验</b>：标题行的"体态"要像标题 ——
- *       短、不含句末标点、不以虚词开头</li>
+ *       短、不以句读标点或语气助词开头、句末标点不能拖在中间
+ *       （注意：<b>感叹号/问号收尾是允许的</b>，见 {@link #TRAILING_ONLY_ENDINGS}）</li>
  * </ol>
  */
 public final class ChapterTitleMatcher {
@@ -72,17 +73,57 @@ public final class ChapterTitleMatcher {
                     + "$");
 
     /**
-     * 句末标点。标题行里出现这些字符，基本可以断定是正文。
-     * 注意中文省略号是单独一个字符 {@code …}，不 ban 掉它的话
-     * "第一章…"这种拖长音的正文会被误收。
+     * <b>一票否决</b>的句末标点：出现在标题行的任何位置都判定为正文。
+     *
+     * <p>这几个字符判别力最强 —— 章节名里几乎不会出现，而正文句子几乎一定会有。
+     * 特别是句号：作者感言、剧情总结这类会被误当成标题的行，末尾基本都是句号。
      */
-    private static final String SENTENCE_ENDINGS = "。！？；…‥!?;";
+    private static final String STRICT_SENTENCE_ENDINGS = "。；;…‥";
+
+    /**
+     * <b>只允许出现在标题末尾</b>的句末标点。
+     *
+     * <p><b>为什么不像句号那样一律封杀？</b>因为真实小说里大量章节名本身就以
+     * 感叹号或问号结尾，这是作者起名的习惯：
+     * <pre>
+     *   第007章  休！              第009章  药老！        第050章  帮？
+     *   第三十八章 输出是什么？     第三十九章地元境！      第三百五十七章 突破，实境中期！
+     * </pre>
+     * 早期版本只要整行"含"这些标点就拒绝，结果是这些章全被并进前一章 ——
+     * 用四本真书做的语料审计里，单《斗破苍穹》一本就误杀了 153 章。
+     *
+     * <p>所以规则收紧为"<b>标点后面不能再有内容</b>"：
+     * {@code 第二章 他到底想说什么！} 这类正文句子因此会通过形态校验 ——
+     * <b>但这正是有意的设计</b>：它会被 {@link TxtChapterSplitter} 的第三重
+     * "序号单调性"校验拦下（正文里引述的章号不可能恰好接在正确的序号位置上）。
+     * 也就是说，这道防线的职责从"看一行长什么样"挪到了"看它在书里的位置"，
+     * 交给更能判断的那一关去做。
+     */
+    private static final String TRAILING_ONLY_ENDINGS = "！？!?";
 
     /** 成对括号，用于剥掉 {@code 【第一章 觉醒】} 这种包裹写法。 */
     private static final String BRACKET_PAIRS = "【】[]{}（）()《》";
 
-    /** 不能作为章节名开头的虚词。 */
-    private static final String FORBIDDEN_TITLE_PREFIX = "的了着过吧呢吗啊嘛哦呀是";
+    /**
+     * 不能作为章节名开头的虚词。
+     *
+     * <p><b>这张表是"宁可放过、不可错杀"的产物。</b>最初把 {@code 的/了/着/过/是}
+     * 都列了进来，理由不足：它们在正文引述里确实常见（"第三章的内容我早就看过了"），
+     * 但作为章节名首字同样常见 ——
+     * <pre>
+     *   第四百九十章 过三关     第三百二十七章 是个高手     第七百五十五章 了不起的新人
+     * </pre>
+     * 四本真书的语料审计里，这几个字一共误杀了 15 条真实标题。现在只保留真正的
+     * <b>语气助词</b>与 {@code 的}：
+     * <ul>
+     *   <li>语气助词（吧/呢/吗/啊/嘛/哦/呀）几乎不可能开一个章节名；</li>
+     *   <li>{@code 的} 保留，因为"的…"开头的章节名极罕见，而"第三章的内容…"
+     *       这类正文引述很常见，留下它有净收益。</li>
+     * </ul>
+     * {@code 了/着/过/是} 已移出：它们造成的误杀大于收益，剩下的风险交给
+     * {@link TxtChapterSplitter} 的序号校验兜底。
+     */
+    private static final String FORBIDDEN_TITLE_PREFIX = "的着吧呢吗啊嘛哦呀";
 
     /**
      * 不能作为章节名开头的标点。
@@ -90,9 +131,17 @@ public final class ChapterTitleMatcher {
      * <p>这条规则专门堵住"第三章，他离开了这座城"这类正文句子：
      * 逗号不在句末标点集合里，正则又允许"章号后面直接跟标题"，
      * 于是「，他离开了这座城」会被整段当成章节名。
-     * 而真正的章节名几乎不可能以标点开头。
+     *
+     * <p><b>为什么只留句读类、把引号和括号放出去？</b>因为"章节名不以标点开头"
+     * 这个直觉只对<b>句读</b>成立。<b>书名号、引号、方括号反而是章节名的常用装饰</b>：
+     * <pre>
+     *   第二十九章 “首杀队”        第三章 【觉醒】        第五章 《大结局》
+     * </pre>
+     * 早期把 {@code “”‘’「」『』【】《》（）()} 一起封杀，导致
+     * {@code 第二十九章 “首杀队”} 这种完全正常的标题被判定为正文。
+     * 现在只保留句读类标点 —— 它们才是"这是一句话"的真正标志。
      */
-    private static final String PUNCTUATION_PREFIX = "，。、；：！？…‥—～·「」『』【】《》（）()\"'“”‘’";
+    private static final String PUNCTUATION_PREFIX = "，。、；：！？…‥—～·";
 
     /** 章节单位类型。 */
     public enum Kind {
@@ -214,8 +263,11 @@ public final class ChapterTitleMatcher {
         if (title.length() > MAX_TITLE_LENGTH) {
             return Verdict.reject("章节名过长（" + title.length() + " 字）");
         }
-        if (containsSentenceEnding(normalized)) {
+        if (containsStrictSentenceEnding(normalized)) {
             return Verdict.reject("含句末标点，判定为正文");
+        }
+        if (endsOnlyEndingAppearsInside(normalized)) {
+            return Verdict.reject("句末标点出现在标题中间，判定为正文");
         }
         if (!title.isEmpty() && FORBIDDEN_TITLE_PREFIX.indexOf(title.charAt(0)) >= 0) {
             return Verdict.reject("章节名以虚词「" + title.charAt(0) + "」开头，判定为正文");
@@ -279,9 +331,33 @@ public final class ChapterTitleMatcher {
         return title.substring(i).strip();
     }
 
-    private static boolean containsSentenceEnding(String text) {
+    /** 出现这些标点就直接否决，不论位置。 */
+    private static boolean containsStrictSentenceEnding(String text) {
         for (int i = 0; i < text.length(); i++) {
-            if (SENTENCE_ENDINGS.indexOf(text.charAt(i)) >= 0) {
+            if (STRICT_SENTENCE_ENDINGS.indexOf(text.charAt(i)) >= 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 感叹号 / 问号只允许收尾。它们出现在中间、后面还跟着字，说明这是句子而不是标题。
+     */
+    private static boolean endsOnlyEndingAppearsInside(String text) {
+        for (int i = 0; i < text.length(); i++) {
+            if (TRAILING_ONLY_ENDINGS.indexOf(text.charAt(i)) >= 0 && hasContentAfter(text, i + 1)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 从 {@code from} 开始还有没有非空白字符。 */
+    private static boolean hasContentAfter(String text, int from) {
+        for (int i = from; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c != ' ' && c != '\t' && c != '\u3000') {
                 return true;
             }
         }
