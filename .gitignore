@@ -24,6 +24,8 @@ replay_pid*.log
 _*
 _probe/
 report.txt
+# 全文检索探针自己写的报告：内容是本机测量值 + 本机绝对路径，属于"产物"不属于项目
+scripts/search-probe-report.md
 
 # ===== 运行时数据（本地书库与配置，不要提交）=====
 data/

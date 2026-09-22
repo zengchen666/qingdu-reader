@@ -126,4 +126,4 @@ if (Test-Path -LiteralPath $report) { Get-Content -LiteralPath $report -Encoding
 
 if ($code -ne 0) { throw "冒烟测试失败（exit $code），看上面对应的 [charset] / [store] 行。" }
 Write-Host ""
-Write-Host "==> 冒烟测试通过：字符集与存储层在裁剪过的运行时上都正常。"
+Write-Host "==> 冒烟测试通过：字符集、存储层、全文检索在裁剪过的运行时上都正常。"

@@ -1,11 +1,17 @@
 import com.qingdu.common.domain.Book;
 import com.qingdu.common.domain.Chapter;
 import com.qingdu.common.domain.ChapterBlock;
+import com.qingdu.common.util.CjkTokenizer;
+import com.qingdu.core.parser.txt.ChapterTextBatch;
 import com.qingdu.core.parser.txt.TxtBookParser;
 import com.qingdu.core.text.CharsetDetector;
 import com.qingdu.store.QingduStore;
+import com.qingdu.store.SearchStore;
 import com.qingdu.store.model.Bookmark;
 import com.qingdu.store.model.ReadingProgress;
+import com.qingdu.store.model.SearchDocument;
+import com.qingdu.store.model.SearchHit;
+import com.qingdu.store.model.SearchResult;
 
 import java.io.FileOutputStream;
 import java.io.PrintStream;
@@ -13,6 +19,7 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -138,6 +145,7 @@ public class PackSmoke {
         // 而是 jlink 把 java.sql 之类的模块裁掉了、或者 sqlite-jdbc 的本地库
         // 在运行时解不出来。这两种情况都只有真正跑起来才会暴露。
         boolean storeOk = false;
+        boolean searchOk = false;
         Path dbDir = null;
         try {
             dbDir = Files.createTempDirectory("qingdu-packsmoke-");
@@ -162,6 +170,16 @@ public class PackSmoke {
             System.out.println("[store] setting        = " + store.settings().get("smoke.key", null));
 
             storeOk = read != null && read.chapterIndex() == 2 && bookmark.id() > 0;
+
+            // ---- 6. 全文检索：验证"这个 sqlite-jdbc 真的带了 FTS5" ----
+            // 这是 v0.2.0 新增的一类运行期风险，和上面那两类同源：
+            // FTS5 是**编译进 sqlite 本地库**的，JDK 侧编译、单元测试、打包全都看不到它 ——
+            // 万一某个环境的 sqlite-jdbc 没编 FTS5，CREATE VIRTUAL TABLE 会在用户点搜索时
+            // 才抛 "no such module: fts5"。所以这里真建一次索引、真查一次。
+            //
+            // 待查的词不写死，而是从第一章正文里现取一个"连续两字汉字"——
+            // 这样不管样例文件怎么改，它一定确实出现在书里（否则这条用例会假红）。
+            searchOk = smokeSearch(store, parser, file, book, chapters);
         } catch (Throwable t) {
             System.out.println("[store] FAILED: " + t);
             t.printStackTrace(System.out);
@@ -181,11 +199,80 @@ public class PackSmoke {
             }
         }
 
-        boolean ok = charsetOk && storeOk;
+        boolean ok = charsetOk && storeOk && searchOk;
         System.out.println("[result] " + (ok ? "SMOKE TEST PASSED"
                 : "SMOKE TEST FAILED"
                 + (charsetOk ? "" : " (charset missing)")
-                + (storeOk ? "" : " (store unavailable)")));
+                + (storeOk ? "" : " (store unavailable)")
+                + (searchOk ? "" : " (full-text search unavailable)")));
+    }
+
+    /**
+     * 在打包产物上跑一遍"建索引 → 查询 → 后过滤"。
+     *
+     * @return 全链路是否正常
+     */
+    private static boolean smokeSearch(QingduStore store, TxtBookParser parser, Path file,
+                                       Book book, List<Chapter> chapters) {
+        System.out.println("[search] ---- FTS5 availability ----");
+        try {
+            if (chapters.isEmpty()) {
+                System.out.println("[search] FAILED: 样本书没有章节，无从建索引");
+                return false;
+            }
+            SearchStore search = store.search();
+
+            // 从每章正文里取一段，作为索引内容（真实流程也是这样：正文来自字节偏移切片）
+            ChapterTextBatch texts = ChapterTextBatch.load(file, chapters);
+            List<SearchDocument> docs = new ArrayList<>(chapters.size());
+            for (int i = 0; i < chapters.size(); i++) {
+                docs.add(new SearchDocument(i, texts.textOf(i)));
+            }
+            String word = pickTwoCharWord(texts.textOf(0));
+            if (word == null) {
+                System.out.println("[search] FAILED: 第一章正文里找不到连续两字汉字，样例不合适");
+                return false;
+            }
+
+            long startedAt = System.nanoTime();
+            search.index(book.id(), SearchStore.fingerprint(file), docs, null);
+            long indexMs = (System.nanoTime() - startedAt) / 1_000_000L;
+
+            SearchResult result = search.search(book.id(), word, Integer.MAX_VALUE, texts::textOf);
+            List<Integer> hitChapters = result.hits().stream().map(SearchHit::chapterIndex).toList();
+
+            System.out.println("[search] fts5           = OK（CREATE VIRTUAL TABLE 成功）");
+            System.out.println("[search] tokenize('" + word + "') = "
+                    + CjkTokenizer.tokenize(word).trim());
+            System.out.println("[search] chapters       = " + chapters.size()
+                    + " | indexed = " + search.indexedChapterCount(book.id())
+                    + " | index ms = " + indexMs);
+            System.out.println("[search] query '" + word + "' -> chapters " + hitChapters
+                    + "（候选 " + result.candidateCount() + "，耗时 " + result.elapsedMs() + " ms）");
+            if (!result.hits().isEmpty()) {
+                System.out.println("[search] snippet        = " + result.hits().get(0).snippet());
+            }
+
+            boolean hit = hitChapters.contains(0);
+            if (!hit) {
+                System.out.println("[search] FAILED: 第一章里明明有「" + word + "」，却没被搜到");
+            }
+            return hit;
+        } catch (Throwable t) {
+            System.out.println("[search] FAILED: " + t);
+            t.printStackTrace(System.out);
+            return false;
+        }
+    }
+
+    /** 取一段文本里第一处"连续两个汉字"，用作待查词 —— 保证它一定在书里。 */
+    private static String pickTwoCharWord(String text) {
+        for (int i = 0; i + 1 < text.length(); i++) {
+            if (CjkTokenizer.isHan(text.charAt(i)) && CjkTokenizer.isHan(text.charAt(i + 1))) {
+                return text.substring(i, i + 2);
+            }
+        }
+        return null;
     }
 
     private static String pad(String s, int width) {

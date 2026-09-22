@@ -13,7 +13,7 @@
 
 用法：
     python scripts\\make-portable-zip.py                 # 版本从 dist\\...\\app\\*.cfg 里读
-    python scripts\\make-portable-zip.py --version 0.1.1 # 也可以显式指定
+    python scripts\\make-portable-zip.py --version 0.2.0 # 也可以显式指定
 
 输出：
     dist\\QingduReader-<version>-win-x64-portable.zip

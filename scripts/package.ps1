@@ -31,9 +31,9 @@ param(
 
     # 版本号，会写进程序元数据。
     # 注意：这里是硬编码的，改版本号必须同步改这里 —— app\ 里的 jar 名带的是
-    # Maven 的 POM 版本（0.1.1-SNAPSHOT），而 exe / zip 名字带的是这里的 $Version，
+    # Maven 的 POM 版本（0.2.0-SNAPSHOT），而 exe / zip 名字带的是这里的 $Version，
     # 两边不一致会出现"jar 是新代码、exe 显示的还是老版本"的错觉。
-    [string] $Version = "0.1.1",
+    [string] $Version = "0.2.0",
 
     # 跳过 Maven 构建，直接复用上一次的 jar（改完代码要重新打包时不要加这个）。
     [switch] $SkipBuild
@@ -92,7 +92,10 @@ if (-not $SkipBuild) {
     # （只带 qingdu-desktop 一个模块），它从本地仓库解析同项目的兄弟模块。
     # 只跑 package 的话，本地仓库里留着的还是上一次 install 的旧 jar ——
     # 打出来的包会"看起来是新编译的，跑起来是旧逻辑"，而且完全不报错。
-    & mvn -B -ntp -f (Join-Path $Root "pom.xml") -pl qingdu-desktop -am install -DskipTests
+    # 带 clean 而不是增量构建：target\ 里留着的旧版本 jar（改版本号后尤其明显）
+    # 会被后面第 2 步误当成"我们的主程序 jar"打进包里，而且完全不报错。
+    # 全量重建反而更慢一点，但换掉一整类"包出来的东西是旧代码"的坑。
+    & mvn -B -ntp -f (Join-Path $Root "pom.xml") -pl qingdu-desktop -am clean install -DskipTests
     if ($LASTEXITCODE -ne 0) { throw "Maven 构建失败，打包中止。" }
 }
 
@@ -112,10 +115,23 @@ if ($LASTEXITCODE -ne 0) { throw "收集依赖失败，打包中止。" }
 
 # copy-dependencies 只复制"依赖"，不复制本模块自己的 jar，所以要单独搬过来。
 # 注意排除 sources / javadoc 包：它们不是运行时代码，带上只会让包变大。
-$mainJarFile = Get-ChildItem -Path $DesktopTarget -Filter "qingdu-desktop-*.jar" -File |
-    Where-Object { $_.Name -notmatch '(sources|javadoc)' } |
-    Select-Object -First 1
-if ($null -eq $mainJarFile) { throw "找不到主程序 jar，请确认 Maven 构建成功。" }
+#
+# 【踩过的坑】这里以前写的是 Select-Object -First 1，结果打进包里的是**上一个版本的 jar**：
+# target\ 里同时留着 qingdu-desktop-0.1.1 和 0.2.0 两个 jar（增量构建不会清理），
+# 而 Get-ChildItem 按名字排序，"0.1.1" 排在 "0.2.0" 前面，于是 -First 1 拿到的永远是旧的那个。
+# 现象是：绿色版打得出来、也能启动、版本号显示新版本，但里面跑的是老代码 —— 完全不报错。
+# 所以现在改成两条：
+#   ① 构建步骤带 clean（从根上保证 target 里没有陈旧产物，见上面第 1 步）；
+#   ② 这里如果发现多个候选就**直接报错**，宁可停下也不要静默挑一个。
+$mainJarCandidates = @(Get-ChildItem -Path $DesktopTarget -Filter "qingdu-desktop-*.jar" -File |
+    Where-Object { $_.Name -notmatch '(sources|javadoc)' })
+if ($mainJarCandidates.Count -eq 0) { throw "找不到主程序 jar，请确认 Maven 构建成功。" }
+if ($mainJarCandidates.Count -gt 1) {
+    $names = ($mainJarCandidates | ForEach-Object { $_.Name }) -join ", "
+    throw "target 里存在多个主程序 jar（$names），无法判断该用哪一个。`n请先执行 mvn clean 再重新打包。"
+}
+$mainJarFile = $mainJarCandidates[0]
+Write-Host "    主程序 jar: $($mainJarFile.Name)"
 Copy-Item -LiteralPath $mainJarFile.FullName -Destination $LibDir -Force
 
 # ---------------------------------------------------------------------
