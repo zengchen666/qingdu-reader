@@ -19,12 +19,14 @@ public final class QingduStore {
     private final BookStore books;
     private final BookmarkStore bookmarks;
     private final SettingStore settings;
+    private final SearchStore search;
 
     private QingduStore(Database database) {
         this.database = database;
         this.books = new BookStore(database);
         this.bookmarks = new BookmarkStore(database);
         this.settings = new SettingStore(database);
+        this.search = new SearchStore(database);
     }
 
     /** 打开默认位置的数据库（用户主目录下），供正式运行使用。 */
@@ -50,6 +52,17 @@ public final class QingduStore {
 
     public SettingStore settings() {
         return settings;
+    }
+
+    /**
+     * 全文检索。
+     *
+     * <p>它和另外三个 store 有个本质区别：<b>表是懒建的</b>。
+     * 检索依赖 SQLite 的 FTS5，万一运行环境没编译进来，
+     * 也不该让"打开阅读器"这件事直接失败 —— 所以建表推迟到第一次真正用到时。
+     */
+    public SearchStore search() {
+        return search;
     }
 
     /** 数据库文件位置，界面上"关于"里会显示它，方便用户备份。 */

@@ -5,9 +5,12 @@ import com.qingdu.common.domain.ChapterBlock;
 import com.qingdu.common.settings.ReaderSettings;
 import javafx.scene.Node;
 import javafx.scene.control.Label;
+import javafx.scene.text.Text;
+import javafx.scene.text.TextFlow;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * 章节内容渲染器 —— 把 {@link Chapter} 翻译成 JavaFX 节点。
@@ -41,7 +44,12 @@ public final class ChapterRenderer {
 
     /** 用默认设置渲染，给不需要自定义排版的场景（如测试）用。 */
     public static List<Node> render(Chapter chapter) {
-        return render(chapter, ReaderSettings.defaults());
+        return render(chapter, ReaderSettings.defaults(), null);
+    }
+
+    /** 不高亮任何词的常规渲染。 */
+    public static List<Node> render(Chapter chapter, ReaderSettings settings) {
+        return render(chapter, settings, null);
     }
 
     /**
@@ -57,7 +65,24 @@ public final class ChapterRenderer {
      * 因为它对长短段落的适应性更好，也不会因为全角空格在不同字体下的
      * 宽度差异导致缩进忽宽忽窄。
      */
-    public static List<Node> render(Chapter chapter, ReaderSettings settings) {
+    /**
+     * 把一章渲染成一组节点，并高亮其中的某个词（搜索结果跳转时用）。
+     *
+     * <p><b>为什么要专门支持高亮？</b>
+     * 从搜索结果跳过去时，用户看到的是一整章（几千字），
+     * 他真正要找的那几个字埋在里面。不给高亮，这个功能的体验就只剩"跳过去了，然后自己找"。
+     *
+     * <p>实现上有个绕不开的取舍：要高亮就必须把整段拆成多个 {@code Text} 节点
+     * 放进 {@code TextFlow}，而不能用一整个 {@code Label}。
+     * 所以只在<b>确实要高亮</b>时才走 {@code TextFlow} 这条路
+     * （见 {@link #highlighted}），常规阅读仍然是每条一个 Label ——
+     * 日常翻页占绝大多数，没必要为了偶尔一次搜索付出额外的节点开销。
+     *
+     * @param chapter   要渲染的章节
+     * @param settings  阅读设置
+     * @param highlight 要高亮的词；null 或空白表示不高亮
+     */
+    public static List<Node> render(Chapter chapter, ReaderSettings settings, String highlight) {
         ReaderSettings effective = (settings == null) ? ReaderSettings.defaults() : settings;
         List<Node> nodes = new ArrayList<>();
 
@@ -67,34 +92,98 @@ public final class ChapterRenderer {
         }
 
         for (ChapterBlock block : chapter.blocks()) {
-            nodes.add(renderBlock(block, effective));
+            nodes.add(renderBlock(block, effective, highlight));
         }
         return nodes;
     }
 
-    private static Node renderBlock(ChapterBlock block, ReaderSettings settings) {
+    private static Node renderBlock(ChapterBlock block, ReaderSettings settings, String highlight) {
         return switch (block) {
-            case ChapterBlock.Heading heading -> renderHeading(heading, settings);
-            case ChapterBlock.Paragraph paragraph -> renderParagraph(paragraph, settings);
+            case ChapterBlock.Heading heading -> renderHeading(heading, settings, highlight);
+            case ChapterBlock.Paragraph paragraph -> renderParagraph(paragraph, settings, highlight);
             case ChapterBlock.Image image -> renderImagePlaceholder(image);
         };
     }
 
-    private static Label renderHeading(ChapterBlock.Heading heading, ReaderSettings settings) {
+    private static Node renderHeading(ChapterBlock.Heading heading, ReaderSettings settings,
+                                      String highlight) {
         double scale = switch (heading.level()) {
             case 1 -> Typography.HEADING1_SCALE;
             case 2 -> Typography.HEADING2_SCALE;
             default -> Typography.HEADING3_SCALE;
         };
+        if (highlighted(heading.text(), highlight)) {
+            TextFlow flow = highlightFlow(heading.text(), settings, highlight, scale);
+            flow.getStyleClass().add("reader-heading");
+            return flow;
+        }
         Label label = newTextLabel(heading.text(), settings, scale);
         label.getStyleClass().add("reader-heading");
         return label;
     }
 
-    private static Label renderParagraph(ChapterBlock.Paragraph paragraph, ReaderSettings settings) {
+    private static Node renderParagraph(ChapterBlock.Paragraph paragraph, ReaderSettings settings,
+                                        String highlight) {
+        if (highlighted(paragraph.text(), highlight)) {
+            TextFlow flow = highlightFlow(paragraph.text(), settings, highlight, 1.0);
+            flow.getStyleClass().add("reader-paragraph");
+            return flow;
+        }
         Label label = newTextLabel(paragraph.text(), settings, 1.0);
         label.getStyleClass().add("reader-paragraph");
         return label;
+    }
+
+    /** 这个词在这一段里到底出现了没有 —— 没出现就用回便宜的 Label 渲染。 */
+    private static boolean highlighted(String text, String highlight) {
+        if (highlight == null || highlight.isEmpty() || text == null || text.isEmpty()) {
+            return false;
+        }
+        // 忽略大小写比较：和 SearchStore 的后过滤保持一致
+        return text.toLowerCase(Locale.ROOT).contains(highlight.toLowerCase(Locale.ROOT));
+    }
+
+    /**
+     * 把一段文字按命中位置切成若干 {@code Text}，命中的那些挂上高亮样式类。
+     *
+     * <p><b>为什么用 {@code TextFlow} 而不是给 Label 上色？</b>
+     * {@code Label} 只能整块一个颜色，做不到"段落里只标出几个字"。
+     * {@code TextFlow} 则可以按顺序摆放任意多个 {@code Text}，
+     * 换行行为与普通段落一致（这是它能直接替代 Label 的前提）。
+     *
+     * <p>对比时用小写：搜索是大小写无关的（见 {@code SearchStore#indexOfIgnoreCase}），
+     * 高亮自然也要无关，否则会出现"搜到了但不标出来"。
+     */
+    private static TextFlow highlightFlow(String text, ReaderSettings settings, String highlight,
+                                          double scale) {
+        TextFlow flow = new TextFlow();
+        String haystack = text.toLowerCase(Locale.ROOT);
+        String needle = highlight.toLowerCase(Locale.ROOT);
+
+        int from = 0;
+        while (from <= text.length()) {
+            int at = haystack.indexOf(needle, from);
+            if (at < 0) {
+                if (from < text.length()) {
+                    flow.getChildren().add(textNode(text.substring(from), settings, scale));
+                }
+                break;
+            }
+            if (at > from) {
+                flow.getChildren().add(textNode(text.substring(from, at), settings, scale));
+            }
+            Text hit = textNode(text.substring(at, at + needle.length()), settings, scale);
+            hit.getStyleClass().add("reader-highlight");
+            flow.getChildren().add(hit);
+            from = at + needle.length();
+        }
+        return flow;
+    }
+
+    private static Text textNode(String text, ReaderSettings settings, double scale) {
+        Text node = new Text(text);
+        node.setStyle(Typography.css(settings, scale));
+        return node;
     }
 
     /**

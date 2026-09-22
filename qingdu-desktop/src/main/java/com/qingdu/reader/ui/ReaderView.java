@@ -18,6 +18,7 @@ import com.qingdu.store.model.RecentBook;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.concurrent.Task;
+import javafx.geometry.Bounds;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -191,6 +192,14 @@ public class ReaderView extends BorderPane {
     /** 书架态。没有打开书时中心区显示的是它。 */
     private BookshelfView bookshelf;
 
+    /**
+     * 左侧第三个标签页：全文搜索。
+     *
+     * <p>它是"当前这本书"的搜索，换书时由 {@link SearchPanel#reset()} 清空 ——
+     * 面板自己不知道书什么时候换了，只能由这里通知（见 {@link #applyResult}）。
+     */
+    private final SearchPanel searchPanel;
+
     // ==================== 阅读状态 ====================
 
     private Path currentFile;
@@ -201,6 +210,15 @@ public class ReaderView extends BorderPane {
 
     /** 有书签的章节序号，用来在目录里打标记。 */
     private final Set<Integer> bookmarkedChapters = new HashSet<>();
+
+    /**
+     * 下一次渲染正文时要高亮的词（从搜索结果跳过来时设置）。
+     *
+     * <p><b>它是一次性的</b>：被 {@code showChapter} 消费掉之后立刻清空。
+     * 不这么做的话，用户从搜索结果跳过去、再点目录里另一章，
+     * 那个词会继续高亮 —— 看起来像程序记错了。
+     */
+    private String highlightTerm;
 
     /**
      * 进度回写的防抖器。
@@ -229,6 +247,10 @@ public class ReaderView extends BorderPane {
 
         // 主题菜单要在 buildTop() 之前建好，否则菜单栏第一次显示时是空的
         buildThemeMenu();
+
+        // 搜索面板要在 buildCenter() 之前建好：它作为左侧第三个标签页的内容被装进去。
+        // store 为 null（数据库没打开）时给它 null，面板自己会切成"不可用"的样子
+        searchPanel = new SearchPanel(store == null ? null : store.search(), new SearchHost());
 
         getStyleClass().add("reader-window");
         readerPane = buildCenter();
@@ -316,13 +338,15 @@ public class ReaderView extends BorderPane {
 
         Menu bookmarkMenu = new Menu("书签", null, buildBookmarkMenuItems());
 
+        Menu searchMenu = new Menu("搜索", null, buildSearchMenuItems());
+
         Menu viewMenu = new Menu("视图", null, buildViewMenuItems());
 
         MenuItem aboutItem = new MenuItem("关于轻读阅读器");
         aboutItem.setOnAction(e -> showAbout());
         Menu helpMenu = new Menu("帮助", null, aboutItem);
 
-        MenuBar bar = new MenuBar(fileMenu, bookmarkMenu, viewMenu, helpMenu);
+        MenuBar bar = new MenuBar(fileMenu, bookmarkMenu, searchMenu, viewMenu, helpMenu);
         bar.getStyleClass().add("reader-menubar");
         return bar;
     }
@@ -337,6 +361,24 @@ public class ReaderView extends BorderPane {
         show.setOnAction(e -> sideTabs.getSelectionModel().select(1));
 
         return new MenuItem[]{add, new SeparatorMenuItem(), show};
+    }
+
+    /**
+     * 搜索菜单。
+     *
+     * <p>{@code Shortcut+F} 是各平台都认的"查找"快捷键，用户不用学。
+     * 按下去做两件事：切到搜索标签页、把光标放进输入框 ——
+     * 只切标签页的话，用户还得再用鼠标点一下输入框才能打字。
+     */
+    private MenuItem[] buildSearchMenuItems() {
+        MenuItem find = new MenuItem("在本书中查找…");
+        find.setAccelerator(KeyCombination.keyCombination("Shortcut+F"));
+        find.setOnAction(e -> {
+            sideTabs.getSelectionModel().select(2);
+            searchPanel.focusInput();
+        });
+
+        return new MenuItem[]{find};
     }
 
     private MenuItem[] buildViewMenuItems() {
@@ -460,7 +502,10 @@ public class ReaderView extends BorderPane {
                     if (newChapter != null && newChapter != oldChapter) {
                         // 恢复进度时用保存的位置，用户自己点则从章首开始
                         double ratio = restoringProgress ? restoreRatio : 0;
-                        showChapter(newChapter, ratio);
+                        // 高亮词只生效一次：取走就清掉，免得用户再点别的章节时还在高亮
+                        String highlight = highlightTerm;
+                        highlightTerm = null;
+                        showChapter(newChapter, ratio, highlight);
                     }
                 });
 
@@ -472,9 +517,12 @@ public class ReaderView extends BorderPane {
 
         Tab chapterTab = new Tab("目录", chapterBox);
         Tab bookmarkTab = new Tab("书签", bookmarkBox);
+        Tab searchTab = new Tab("搜索", searchPanel);
         chapterTab.setClosable(false);
         bookmarkTab.setClosable(false);
-        sideTabs.getTabs().setAll(chapterTab, bookmarkTab);
+        searchTab.setClosable(false);
+        // 顺序即快捷键里用的下标：0 目录、1 书签、2 搜索（见 buildBookmarkMenuItems 与搜索菜单）
+        sideTabs.getTabs().setAll(chapterTab, bookmarkTab, searchTab);
         sideTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         sideTabs.getStyleClass().add("reader-tabs");
 
@@ -927,6 +975,10 @@ public class ReaderView extends BorderPane {
         restoringProgress = false;
         restoreRatio = 0;
 
+        // 换书了：搜索面板里还留着上一本书的结果和整本书的字节缓存，必须清掉
+        searchPanel.reset();
+        highlightTerm = null;
+
         reloadRecentMenu();
         showRestoreNotice(saved);
     }
@@ -947,9 +999,12 @@ public class ReaderView extends BorderPane {
         chapters = List.of();
         currentChapterIndex = -1;
         bookmarkedChapters.clear();
+        highlightTerm = null;
         chapterList.getItems().clear();
         bookmarkList.getItems().clear();
         contentBox.getChildren().clear();
+        // 搜索面板缓存着整本书的字节（10 MB 量级）和这本书的搜索结果，一并释放
+        searchPanel.reset();
         // 「无书时界面长什么样」只在 showBookshelf() 里定义一次，
         // 这里不重复设置书名条和状态栏 —— 两处各写一份，早晚会走散
         showBookshelf();
@@ -962,8 +1017,9 @@ public class ReaderView extends BorderPane {
      * 显示某一章。
      *
      * @param restoreRatio 章内要恢复到的滚动比例；0 表示从章首开始
+     * @param highlight    要高亮的词（从搜索结果跳过来时传），可以为 null
      */
-    private void showChapter(Chapter chapter, double restoreRatio) {
+    private void showChapter(Chapter chapter, double restoreRatio, String highlight) {
         if (currentFile == null) {
             return;
         }
@@ -972,15 +1028,59 @@ public class ReaderView extends BorderPane {
             // 所以这里刻意不做异步 —— 少一层复杂度，翻页响应还更即时
             Chapter loaded = parser.loadChapter(currentFile, chapter);
             contentBox.setAlignment(Pos.TOP_LEFT);
-            contentBox.getChildren().setAll(ChapterRenderer.render(loaded, settings));
+            contentBox.getChildren().setAll(ChapterRenderer.render(loaded, settings, highlight));
             currentChapterIndex = chapter.index();
-            restoreScroll(restoreRatio);
+            if (highlight == null || highlight.isEmpty()) {
+                restoreScroll(restoreRatio);
+            } else {
+                // 从搜索跳过来时，"读到哪里"由命中位置决定，而不是章首 ——
+                // 否则用户看到的是这一章的开头，还得自己往下找
+                scrollToHighlight();
+            }
             refreshStatusChapter();
             // 章节变了就是"读到了这里"，立刻排一次回写
             progressDebounce.playFromStart();
         } catch (BookParseException e) {
             showError("读取章节失败", e);
         }
+    }
+
+    /**
+     * 把视口滚到第一个高亮词那里。
+     *
+     * <p>做法是先让布局跑一遍（不跑的话节点尺寸还是 0，算不出位置），
+     * 再把那个节点在场景里的位置换算回 {@code contentBox} 的坐标系，
+     * 最后折算成滚动条的比例值。
+     *
+     * <p>用"命中位置 - 视口高度的 30%"当目标，是让命中词落在屏幕<b>偏上</b>的位置 ——
+     * 正中间往上一点，前后文都能看到一点，比正对中线更符合阅读习惯。
+     *
+     * <p>整段包在 try 里：定位失败最多是"停在章首"，用户自己滚一下就行，
+     * 不值得为一个装饰性行为把阅读流程弄崩。
+     */
+    private void scrollToHighlight() {
+        contentScroll.setVvalue(0);
+        Platform.runLater(() -> {
+            try {
+                contentScroll.applyCss();
+                contentScroll.layout();
+                Node first = contentBox.lookup(".reader-highlight");
+                if (first == null) {
+                    return;
+                }
+                Bounds inContent = contentBox.sceneToLocal(first.localToScene(first.getBoundsInLocal()));
+                double viewportHeight = contentScroll.getViewportBounds().getHeight();
+                double scrollable = contentBox.getHeight() - viewportHeight;
+                double y = inContent.getMinY();
+                if (scrollable <= 0 || !Double.isFinite(y)) {
+                    return;
+                }
+                double ratio = (y - viewportHeight * 0.3) / scrollable;
+                contentScroll.setVvalue(Math.max(0, Math.min(1, ratio)));
+            } catch (RuntimeException ignored) {
+                // 定位不到就停在章首，不影响阅读
+            }
+        });
     }
 
     /**
@@ -1280,7 +1380,9 @@ public class ReaderView extends BorderPane {
         // 单章的解码只要几毫秒，比维护一套"就地改样式"的逻辑划算得多。
         if (currentChapterIndex >= 0 && currentChapterIndex < chapters.size()) {
             double ratio = contentScroll.getVvalue();
-            showChapter(chapters.get(currentChapterIndex), ratio);
+            // 这里刻意不高亮：改字号是"排版"动作，不该把搜索结果的高亮又带回来，
+            // 否则用户早就翻到别处了，改一下字号突然又冒出几个高亮词
+            showChapter(chapters.get(currentChapterIndex), ratio, null);
         }
     }
 
@@ -1440,7 +1542,7 @@ public class ReaderView extends BorderPane {
 
     private void showAbout() {
         Alert alert = themedAlert(Alert.AlertType.INFORMATION);
-        alert.setHeaderText("轻读阅读器 0.1.1");
+        alert.setHeaderText("轻读阅读器 0.2.0");
         alert.setContentText("""
                 一个本地优先的中文小说阅读器。
 
@@ -1449,6 +1551,7 @@ public class ReaderView extends BorderPane {
                 · 三重校验的章节切分
                 · 按字节偏移量按需加载正文
                 · 阅读进度与书签自动保存
+                · 全书全文搜索（Ctrl + F），结果可点击跳转并高亮
                 · 日间 / 护眼 / 羊皮纸 / 夜间 四种主题
 
                 数据位置：""" + (store == null ? "（本次运行未启用）" : store.databaseFile())
@@ -1462,6 +1565,54 @@ public class ReaderView extends BorderPane {
     private void warnOnce(String what, StoreException error) {
         statusLabel.setText(what + "：" + error.getMessage());
         System.err.println("[轻读] " + what + "：" + error);
+    }
+
+    // ==================== 搜索面板的回调 ====================
+
+    /**
+     * 搜索面板要用的那几件事。
+     *
+     * <p>写成内部类而不是让 {@link SearchPanel} 直接持有 {@code ReaderView}：
+     * 面板因此只认识一个四方法的接口，不必知道这个界面的其余一千多行 ——
+     * 这两者的耦合方向就只有一个（面板 → 宿主），反过来没有。
+     */
+    private final class SearchHost implements SearchPanel.Host {
+
+        @Override
+        public Book currentBook() {
+            return currentBook;
+        }
+
+        @Override
+        public Path currentFile() {
+            return currentFile;
+        }
+
+        @Override
+        public List<Chapter> chapters() {
+            return chapters;
+        }
+
+        @Override
+        public void jumpToChapter(int chapterIndex, String highlight) {
+            if (chapterIndex < 0 || chapterIndex >= chapters.size()) {
+                return;
+            }
+            if (chapterList.getSelectionModel().getSelectedIndex() == chapterIndex) {
+                // 已经在同一章：选中项没变化，监听器不会触发，
+                // 只能直接渲染一次，否则点了结果界面一动不动
+                showChapter(chapters.get(chapterIndex), 0, highlight);
+                return;
+            }
+            highlightTerm = highlight;
+            chapterList.getSelectionModel().select(chapterIndex);
+            chapterList.scrollTo(chapterIndex);
+        }
+
+        @Override
+        public void setStatus(String text) {
+            statusLabel.setText(text);
+        }
     }
 
     // ==================== 小工具 ====================

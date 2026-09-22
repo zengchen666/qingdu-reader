@@ -38,6 +38,11 @@
        这个代表"出问题了"，混用会让两种语义分不开。 */
     -qd-warn:           #b4534b;
 
+    /* 搜索结果里高亮词的颜色。刻意不用 -qd-accent：
+       强调色代表"可点的"，而高亮只是"你找的字在这儿"，
+       两者语义不同。琥珀色在日间/护眼/羊皮纸/夜间四种底色上都够醒目。 */
+    -qd-highlight:      #a35a00;
+
     -qd-scroll-thumb:       #cfcabb;
     -qd-scroll-thumb-hover: #b3ad9c;
 }
@@ -291,6 +296,19 @@
     -fx-padding: 0 0 8 0;
 }
 
+/* 搜索结果里命中的词。
+
+   注意这是 Text 的样式，不是 Label 的：JavaFX 里 Text 继承自 Shape，
+   没有 background（那是 Region 才有的属性），所以不可能做"黄底高亮"。
+   这里用「换色 + 加粗 + 下划线」三件套来强调 ——
+   它还有个附带好处：在四种主题下都保证看得清，不会出现
+   "黄底压在米黄纸上"那种对比度不足的情况。 */
+.reader-highlight {
+    -fx-fill: -qd-highlight;
+    -fx-font-weight: bold;
+    -fx-underline: true;
+}
+
 .reader-image-note {
     -fx-font-size: 13px;
     -fx-text-fill: -qd-text-faint;
@@ -426,6 +444,68 @@
 .bookshelf-empty-hint {
     -fx-font-size: 13px;
     -fx-text-fill: -qd-text-muted;
+}
+
+/* ===================== 搜索面板 ===================== */
+
+/* 左侧第三个标签页的内容。左右内边距特意和目录列表的单元格（7 12）对齐，
+   切标签时文字不会左右跳一下。 */
+.reader-search-panel {
+    -fx-background-color: transparent;
+}
+
+.reader-search-field {
+    -fx-font-size: 13px;
+    -fx-background-color: -qd-content-bg;
+    -fx-text-fill: -qd-text;
+    -fx-prompt-text-fill: -qd-text-faint;
+    -fx-border-color: -qd-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+    -fx-padding: 5 8 5 8;
+}
+
+.reader-search-field:focused {
+    -fx-border-color: -qd-accent;
+}
+
+.reader-search-button {
+    -fx-font-size: 13px;
+    -fx-background-color: -qd-accent;
+    -fx-text-fill: -qd-selection-text;
+    -fx-background-radius: 4;
+    -fx-padding: 5 12 5 12;
+}
+
+/* "找到 12 章 · 候选 12 章 · 耗时 54 ms" 这类提示。
+   候选数与精确数都显示出来，是为了让用户（和开发者）一眼看出
+   后过滤有没有在干活 —— 中文 bigram 检索里这两个数字不一样是正常的。 */
+.reader-search-hint {
+    -fx-font-size: 12px;
+    -fx-text-fill: -qd-text-muted;
+    -fx-padding: 0 0 2 0;
+}
+
+/* 一条结果 = 标题行 + 命中上下文 */
+.reader-search-cell {
+    -fx-padding: 2 0 2 0;
+}
+
+.reader-search-title {
+    -fx-font-size: 13px;
+    -fx-text-fill: -qd-text-heading;
+}
+
+.reader-search-snippet {
+    -fx-font-size: 12px;
+    -fx-text-fill: -qd-text-muted;
+}
+
+/* 选中时整格反色，两行文字都要跟着变，否则标题会糊在选中底色里 */
+.reader-list .list-cell:filled:selected .reader-search-title,
+.reader-list .list-cell:filled:selected .reader-search-snippet {
+    -fx-text-fill: -qd-selection-text;
 }
 
 /* ===================== 全书进度条 ===================== */
