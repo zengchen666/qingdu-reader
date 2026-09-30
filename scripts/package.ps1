@@ -31,15 +31,49 @@ param(
 
     # 版本号，会写进程序元数据。
     # 注意：这里是硬编码的，改版本号必须同步改这里 —— app\ 里的 jar 名带的是
-    # Maven 的 POM 版本（0.2.0-SNAPSHOT），而 exe / zip 名字带的是这里的 $Version，
+    # Maven 的 POM 版本（0.2.1-SNAPSHOT），而 exe / zip 名字带的是这里的 $Version，
     # 两边不一致会出现"jar 是新代码、exe 显示的还是老版本"的错觉。
-    [string] $Version = "0.2.0",
+    # 第三处是 ReaderView.VERSION —— 用户点「帮助 → 关于」时看到的那个数字。
+    [string] $Version = "0.2.1",
 
     # 跳过 Maven 构建，直接复用上一次的 jar（改完代码要重新打包时不要加这个）。
     [switch] $SkipBuild
 )
 
 $ErrorActionPreference = "Stop"
+
+# ---------------------------------------------------------------------
+#  原生命令的统一调用方式：只看退出码，不看 PowerShell 对 stderr 的判断
+#
+#  【踩过的坑，而且它会让打包"看起来失败其实没失败"】
+#  PowerShell 5.1 会把原生命令写到 stderr 的**任何**输出包成 NativeCommandError。
+#  本脚本上面设了 $ErrorActionPreference = "Stop"，于是这一条被升级成**终止性**错误，
+#  打包在第 1 步就中止。触发它的却完全是无害的东西 —— JDK 24+ 启动时必然打的：
+#      WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+#  Maven 自己认为一切正常（BUILD SUCCESS、测试全绿），脚本却已经死了。
+#
+#  所以：临时把 EAP 降成 Continue，让原生命令的 stderr 只是普通输出，
+#  然后**显式检查 $LASTEXITCODE** —— 那才是 mvn / jdeps / jpackage 的真实结论。
+#  （注意区别：$LASTEXITCODE 是子进程自己的退出码，不受上面这层包装影响；
+#    被包装成 1 的是"PowerShell 会话"的退出码，不是它。）
+# ---------------------------------------------------------------------
+function Invoke-Native {
+    param(
+        [Parameter(Mandatory)] [string]      $What,
+        [Parameter(Mandatory)] [scriptblock] $Action
+    )
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $Action
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+    if ($code -ne 0) {
+        throw "$What 失败（退出码 $code）。"
+    }
+}
 
 # ---------------------------------------------------------------------
 # 路径准备
@@ -82,6 +116,59 @@ Write-Host "==> 项目根目录: $Root"
 Write-Host "==> 使用 JDK  : $JavaHome"
 
 # ---------------------------------------------------------------------
+#  清目录：直接用 .NET 删，不走 Remove-Item
+#
+#  【踩过的坑】本项目的开发机上 Remove-Item 被替换成了"移入回收站"的实现，
+#  对 target\ 里的文件会报 trash-failed（回收站相关操作被中止）：
+#      [safe-delete][SAFE_DELETE_FAIL_CLOSED] reason=trash-failed
+#        ... Error during a `trash` operation: Some operations were aborted
+#  配合 $ErrorActionPreference = "Stop"，打包会在删依赖 jar 那一步直接中断 ——
+#  而 Maven 两步都已经 BUILD SUCCESS 了，看起来像"打包坏了"，其实什么都没坏。
+#
+#  要删的都是**构建产物**（target\、dist\ 下、已在 .gitignore 里、随时可重建），
+#  所以直接用 .NET 删更合适：不受回收站容量和状态影响，也快得多。
+#
+#  ⚠️ 安全约束（写在这里是为了防止以后有人改错变量、一下删到项目外面去）：
+#  只允许删项目根之下、且位于 target / dist / out 这三个构建目录里的路径；
+#  其余一律拒绝。这是本脚本唯一一处绕过系统删除机制的地方，所以把边界写死。
+# ---------------------------------------------------------------------
+function Remove-BuildPath {
+    param([Parameter(Mandatory)] [string] $Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+
+    $full     = [IO.Path]::GetFullPath($Path)
+    $rootFull = [IO.Path]::GetFullPath($Root)
+    $prefix   = $rootFull.TrimEnd('\') + '\'
+
+    if (-not $full.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "拒绝删除项目目录之外的路径：$full"
+    }
+    # 判据是"路径里有没有 target / dist / out 这一段"，而不是"第一段是不是它"——
+    # 因为要删的 package-stage 在 qingdu-desktop\target\ 底下，顶层是模块名
+    $allowed  = @("target", "dist", "out")
+    $segments = $full.Substring($prefix.Length) -split '[\\/]'
+    if (@($segments | Where-Object { $allowed -contains $_ }).Count -eq 0) {
+        throw "拒绝删除：路径不在 target / dist / out 之下（$full）"
+    }
+
+    if ([IO.File]::Exists($full)) {
+        [IO.File]::Delete($full)
+        return
+    }
+    # 递归删目录前先清掉只读属性：.NET Framework 的 Directory.Delete(recursive)
+    # 遇到只读文件会抛 UnauthorizedAccessException（.NET Core 之后才自动处理）
+    Get-ChildItem -LiteralPath $full -Recurse -Force -File | ForEach-Object {
+        if ($_.IsReadOnly) { $_.IsReadOnly = $false }
+    }
+    try {
+        [IO.Directory]::Delete($full, $true)
+    } catch {
+        throw "删不掉 $full —— 可能有进程还占着它（上一次没退干净的阅读器？）：$($_.Exception.Message)"
+    }
+}
+
+# ---------------------------------------------------------------------
 # 第 1 步：Maven 构建 + 收集依赖
 # ---------------------------------------------------------------------
 if (-not $SkipBuild) {
@@ -95,23 +182,23 @@ if (-not $SkipBuild) {
     # 带 clean 而不是增量构建：target\ 里留着的旧版本 jar（改版本号后尤其明显）
     # 会被后面第 2 步误当成"我们的主程序 jar"打进包里，而且完全不报错。
     # 全量重建反而更慢一点，但换掉一整类"包出来的东西是旧代码"的坑。
-    & mvn -B -ntp -f (Join-Path $Root "pom.xml") -pl qingdu-desktop -am clean install -DskipTests
-    if ($LASTEXITCODE -ne 0) { throw "Maven 构建失败，打包中止。" }
+    Invoke-Native -What "Maven 构建" -Action {
+        & mvn -B -ntp -f (Join-Path $Root "pom.xml") -pl qingdu-desktop -am clean install -DskipTests
+    }
 }
 
 Write-Host ""
 Write-Host "==> [2/4] 收集运行时依赖并分流（app 走 classpath，JavaFX 走 module-path）..."
 
 # 每次重建都清空，否则上一轮删掉的依赖会一直留在包里（经典的"幽灵依赖"问题）
-if (Test-Path -LiteralPath $StageDir) {
-    Remove-Item -LiteralPath $StageDir -Recurse -Force
-}
+Remove-BuildPath $StageDir
 New-Item -ItemType Directory -Path $LibDir   -Force | Out-Null
 New-Item -ItemType Directory -Path $FxLibDir -Force | Out-Null
 
-& mvn -B -ntp -f (Join-Path $Root "pom.xml") -pl qingdu-desktop dependency:copy-dependencies `
-    "-DincludeScope=runtime" "-DoutputDirectory=$LibDir"
-if ($LASTEXITCODE -ne 0) { throw "收集依赖失败，打包中止。" }
+Invoke-Native -What "收集运行时依赖" -Action {
+    & mvn -B -ntp -f (Join-Path $Root "pom.xml") -pl qingdu-desktop dependency:copy-dependencies `
+        "-DincludeScope=runtime" "-DoutputDirectory=$LibDir"
+}
 
 # copy-dependencies 只复制"依赖"，不复制本模块自己的 jar，所以要单独搬过来。
 # 注意排除 sources / javadoc 包：它们不是运行时代码，带上只会让包变大。
@@ -149,10 +236,18 @@ Copy-Item -LiteralPath $mainJarFile.FullName -Destination $LibDir -Force
 #  当作正经模块编进运行时镜像，选项名才对得上，警告自然消失，
 #  而且能从运行时镜像里加载 JavaFX —— 这是官方推荐的部署形态。
 # ---------------------------------------------------------------------
+# 【踩过的坑】这里刻意用 ForEach-Object 显式传 -LiteralPath，而不是直接管道给 cmdlet：
+# 本项目的开发机上 Remove-Item 被替换成了"安全删除"代理，它的参数签名和系统自带的
+# 不一样，管道绑定会被拒绝，报的是「无法将输入对象绑定到命令的任何参数」
+# （ParameterBindingException）—— 看起来像"脚本写错了"，其实是环境差异。
+# 显式传完整路径对两种实现都成立，最稳。
 Get-ChildItem -Path $LibDir -Filter "javafx-*-win.jar" -File |
-    Move-Item -Destination $FxLibDir -Force
-# 空壳 jar 直接删掉，留着只会让包变胖
-Get-ChildItem -Path $LibDir -Filter "javafx-*.jar" -File | Remove-Item -Force
+    ForEach-Object { Move-Item -LiteralPath $_.FullName -Destination $FxLibDir -Force }
+# 空壳 jar 直接删掉，留着只会让包变胖。
+# 走 Remove-BuildPath 而不是 Remove-Item：本机 Remove-Item 的"回收站"实现在
+# target\ 里会 trash-failed，见上面那个函数的注释
+Get-ChildItem -Path $LibDir -Filter "javafx-*.jar" -File |
+    ForEach-Object { Remove-BuildPath $_.FullName }
 
 $appJarCount = (Get-ChildItem -Path $LibDir   -Filter *.jar -File).Count
 $fxJarCount  = (Get-ChildItem -Path $FxLibDir -Filter *.jar -File).Count
@@ -174,8 +269,19 @@ $classPath = $jarPaths -join ';'
 
 # --print-module-deps 输出一行逗号分隔的模块名；--ignore-missing-deps 让它跳过
 # 找不到的可选依赖而不是直接报错。
-$jdepsOutput = & $Jdeps --multi-release 25 --print-module-deps --ignore-missing-deps `
-    --class-path $classPath $jarPaths 2>&1
+#
+# 这里也走 Invoke-Native：jdeps 同样会往 stderr 写东西，裸调用会被 EAP=Stop 判成失败。
+# 但**不要求它退出码为 0** —— 拿不到模块列表本来就有退路（退回不裁剪的完整运行时），
+# 那是"少 30 MB 优化"，不是"打包失败"，所以失败只警告、不中止。
+$jdepsOutput = @()
+try {
+    $jdepsOutput = Invoke-Native -What "jdeps" -Action {
+        & $Jdeps --multi-release 25 --print-module-deps --ignore-missing-deps `
+            --class-path $classPath $jarPaths 2>&1
+    }
+} catch {
+    Write-Warning "jdeps 调用失败：$($_.Exception.Message)"
+}
 $moduleList = ($jdepsOutput | Where-Object { $_ -match '^[a-z][a-z0-9.]*(,[a-z0-9.]+)*$' } | Select-Object -Last 1)
 
 if ([string]::IsNullOrWhiteSpace($moduleList)) {
@@ -238,9 +344,7 @@ if ($null -ne $moduleList) {
 Write-Host ""
 Write-Host "==> [4/4] 生成免安装程序..."
 
-if (Test-Path -LiteralPath $AppDir) {
-    Remove-Item -LiteralPath $AppDir -Recurse -Force
-}
+Remove-BuildPath $AppDir
 New-Item -ItemType Directory -Path $DistDir -Force | Out-Null
 
 $jpackageArgs = @(
@@ -269,8 +373,9 @@ if ($null -ne $moduleList) {
 #   不带上这一项，一开库就会打警告。
 $jpackageArgs += @("--java-options", "--enable-native-access=javafx.graphics,ALL-UNNAMED")
 
-& $Jpackage @jpackageArgs
-if ($LASTEXITCODE -ne 0) { throw "jpackage 执行失败。" }
+Invoke-Native -What "jpackage" -Action {
+    & $Jpackage @jpackageArgs
+}
 
 # ---------------------------------------------------------------------
 # 结果

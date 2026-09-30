@@ -36,6 +36,33 @@ param(
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
+# ---------------------------------------------------------------------
+#  原生命令的统一调用方式：只看退出码，不看 PowerShell 对 stderr 的判断
+#
+#  【和 package.ps1 里同一个坑】PowerShell 5.1 会把原生命令写到 stderr 的
+#  任何输出包成 NativeCommandError，而本脚本设了 EAP = "Stop"，
+#  于是它被升级成终止性错误。触发它的可能只是 JDK 启动时那句无害的
+#  "WARNING: A terminally deprecated method in sun.misc.Unsafe has been called"。
+#  降成 Continue 再显式查 $LASTEXITCODE，才是子进程的真实结论。
+# ---------------------------------------------------------------------
+function Invoke-Native {
+    param(
+        [Parameter(Mandatory)] [string]      $What,
+        [Parameter(Mandatory)] [scriptblock] $Action
+    )
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $Action
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+    if ($code -ne 0) {
+        throw "$What 失败（退出码 $code）。"
+    }
+}
+
 $Root   = Split-Path -Parent $PSScriptRoot
 $Stage  = Join-Path $Root "qingdu-desktop\target\package-stage"
 $AppDir = Join-Path $Stage "app"
@@ -101,8 +128,9 @@ if (-not $SkipCompile) {
     $outDir = Join-Path $Work "out"
     New-Item -ItemType Directory -Path $outDir -Force | Out-Null
     # classpath 里已经包含 sqlite-jdbc，所以 PackSmoke 能直接引用存储层
-    & $Javac -encoding UTF-8 -cp "$AppDir\*" -d $outDir (Join-Path $Root "scripts\PackSmoke.java")
-    if ($LASTEXITCODE -ne 0) { throw "javac 失败。" }
+    Invoke-Native -What "javac 编译 PackSmoke" -Action {
+        & $Javac -encoding UTF-8 -cp "$AppDir\*" -d $outDir (Join-Path $Root "scripts\PackSmoke.java")
+    }
 }
 
 $report = Join-Path $Work "smoke-report.txt"
@@ -112,14 +140,23 @@ Write-Host "==> 在裁剪过的运行时上跑冒烟测试（报告：$report）
 # 否则直接报 "Module javafx.base not found"。
 # --enable-native-access 必须带 ALL-UNNAMED：sqlite-jdbc 从 classpath（未命名模块）
 # 加载本地库，不带就会刷一屏 WARNING。
-& $Java `
-    --module-path $FxDir `
-    --add-modules $javafxModules `
-    --limit-modules $allModules `
-    --enable-native-access=javafx.graphics,ALL-UNNAMED `
-    -cp "$(Join-Path $Work 'out');$AppDir\*" `
-    PackSmoke $fixture $report
-$code = $LASTEXITCODE
+# 这里刻意不直接把 Invoke-Native 抛出的异常往外扔：先记下失败，
+# 让下面的报告照样打印出来（报告才是"为什么失败"的证据），最后再统一抛出。
+$code = 0
+try {
+    Invoke-Native -What "冒烟测试" -Action {
+        & $Java `
+            --module-path $FxDir `
+            --add-modules $javafxModules `
+            --limit-modules $allModules `
+            --enable-native-access=javafx.graphics,ALL-UNNAMED `
+            -cp "$(Join-Path $Work 'out');$AppDir\*" `
+            PackSmoke $fixture $report
+    }
+} catch {
+    $code = 1
+    Write-Warning $_.Exception.Message
+}
 
 Write-Host ""
 if (Test-Path -LiteralPath $report) { Get-Content -LiteralPath $report -Encoding UTF8 }
