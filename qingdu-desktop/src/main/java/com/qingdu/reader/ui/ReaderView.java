@@ -41,6 +41,7 @@ import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
+import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.input.KeyCombination;
 import javafx.scene.layout.BorderPane;
@@ -61,6 +62,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -116,6 +118,23 @@ import java.util.Set;
  */
 public class ReaderView extends BorderPane {
 
+    /**
+     * 「关于」里显示的版本号。
+     *
+     * <p><b>⚠️ 它与另外两处版本号是"各管一半"的关系，改版本时必须一起改：</b>
+     * <ul>
+     *   <li>父 POM 的 {@code <version>} —— 决定打出来的 {@code *.jar} 叫什么名字；</li>
+     *   <li>{@code scripts/package.ps1} 里的 {@code $Version} —— 决定 exe 的元数据、
+     *       cfg 里的 {@code -Djpackage.app-version} 和 zip 的文件名；</li>
+     *   <li>这里 —— 决定用户点「帮助 → 关于」时看到的数字。</li>
+     * </ul>
+     * 三处不一致的后果很难看：exe 属性里写着 0.2.1，点开「关于」却是 0.2.0。
+     * 之所以不写成自动读取（{@code getPackage().getImplementationVersion()}），
+     * 是因为开发模式下（{@code mvn javafx:run}）它恒为 null ——
+     * 那样"关于"里就会显示一串 {@code null}，比手写一个常量更糟。
+     */
+    public static final String VERSION = "0.2.1";
+
     /** 「最近打开」菜单最多列几本。 */
     private static final int RECENT_LIMIT = 12;
 
@@ -141,6 +160,15 @@ public class ReaderView extends BorderPane {
 
     /** 版心左右的内边距。和 {@code contentBox} 的 padding 是同一个数，必须一起改。 */
     private static final double COLUMN_PADDING_X = 40;
+
+    /**
+     * 左右分栏的初始比例：目录栏占窗口宽度的 24%。
+     *
+     * <p>这个数不是随手取的。左侧要能放下「第 1234 章 云岚宗一脉的旧事」这种
+     * 长度的标题而不至于截得太狠，又不能宽到挤压版心 —— 版心自己的宽度是按
+     * "一行 34 个字"算死的，窗口再宽它也不会变，所以留给侧栏的余量本来就不多。
+     */
+    private static final double DEFAULT_DIVIDER = 0.24;
 
     // ==================== 依赖 ====================
 
@@ -179,6 +207,40 @@ public class ReaderView extends BorderPane {
     private final Menu recentMenu = new Menu("最近打开");
     private final Menu themeMenu = new Menu("主题");
     private final ToggleGroup themeGroup = new ToggleGroup();
+
+    /**
+     * 「收起目录栏」开关。
+     *
+     * <p>用 {@code ToggleButton} 而不是普通按钮，是为了让"现在是收起状态"
+     * 这件事有地方可以表示（选中态，见 {@code .sidebar-toggle:selected}）。
+     * 用普通按钮的话，只能靠改按钮文字来表达状态，文字一变宽度就变，
+     * 上方的书籍信息条会跟着抖一下。
+     *
+     * <p>它<b>必须放在书籍信息条里</b>，不能放进侧栏自己的标题栏 ——
+     * 侧栏一收起，放在侧栏里的开关就跟着没了，用户再也点不回来。
+     */
+    private final ToggleButton sidebarToggle = new ToggleButton("◧ 收起目录");
+
+    /**
+     * 收起前侧栏的分隔条位置（0~1 的比例）。
+     *
+     * <p>展开时要还回用户原来拖到的位置，而不是写死回 0.24 ——
+     * 用户如果习惯把目录拖得很宽，收起一次再展开就被重置，那是很烦的事。
+     */
+    private double lastDividerPosition = DEFAULT_DIVIDER;
+
+    /** 侧栏当前是否收起。 */
+    private boolean sidebarCollapsed = false;
+
+    /**
+     * 阅读设置窗口。非模态、单例。
+     *
+     * <p>单例是刻意的：这个窗口里的改动是<b>立刻生效</b>的，
+     * 同时开两个的话，两边各自持有一份 {@code pending} 设置，
+     * 后关的那一个会把先关的那一个的改动覆盖掉 —— 用户看到的是"设置自己变回去"。
+     * 已经开着就把它提到前面，而不是再开一个。
+     */
+    private SettingsWindow settingsWindow;
 
     /**
      * 阅读态的整个中心区（左侧「目录 / 书签」+ 右边正文）。
@@ -338,6 +400,8 @@ public class ReaderView extends BorderPane {
 
         Menu bookmarkMenu = new Menu("书签", null, buildBookmarkMenuItems());
 
+        Menu readingMenu = new Menu("阅读", null, buildReadingMenuItems());
+
         Menu searchMenu = new Menu("搜索", null, buildSearchMenuItems());
 
         Menu viewMenu = new Menu("视图", null, buildViewMenuItems());
@@ -346,7 +410,7 @@ public class ReaderView extends BorderPane {
         aboutItem.setOnAction(e -> showAbout());
         Menu helpMenu = new Menu("帮助", null, aboutItem);
 
-        MenuBar bar = new MenuBar(fileMenu, bookmarkMenu, searchMenu, viewMenu, helpMenu);
+        MenuBar bar = new MenuBar(fileMenu, readingMenu, bookmarkMenu, searchMenu, viewMenu, helpMenu);
         bar.getStyleClass().add("reader-menubar");
         return bar;
     }
@@ -384,7 +448,7 @@ public class ReaderView extends BorderPane {
     private MenuItem[] buildViewMenuItems() {
         MenuItem settingsItem = new MenuItem("阅读设置…");
         settingsItem.setAccelerator(KeyCombination.keyCombination("Shortcut+Comma"));
-        settingsItem.setOnAction(e -> openSettingsDialog());
+        settingsItem.setOnAction(e -> openSettingsWindow());
 
         MenuItem bigger = new MenuItem("增大字号");
         bigger.setAccelerator(KeyCombination.keyCombination("Shortcut+Equals"));
@@ -394,8 +458,37 @@ public class ReaderView extends BorderPane {
         smaller.setAccelerator(KeyCombination.keyCombination("Shortcut+Minus"));
         smaller.setOnAction(e -> changeFontSize(-1));
 
-        return new MenuItem[]{themeMenu, new SeparatorMenuItem(), settingsItem,
-                new SeparatorMenuItem(), bigger, smaller};
+        MenuItem sidebarItem = new MenuItem("收起 / 展开目录栏");
+        // F9 是不少阅读器的习惯键位；这里没有用带 Ctrl 的组合，
+        // 是因为"看/不看目录"是个高频的临时动作，值得一个单手能按的键
+        sidebarItem.setAccelerator(KeyCombination.keyCombination("F9"));
+        sidebarItem.setOnAction(e -> toggleSidebar());
+
+        return new MenuItem[]{themeMenu, new SeparatorMenuItem(), sidebarItem,
+                new SeparatorMenuItem(), settingsItem, new SeparatorMenuItem(), bigger, smaller};
+    }
+
+    /**
+     * 阅读菜单：翻章。
+     *
+     * <p><b>为什么要给它单独开一个菜单，而不是塞进「视图」？</b><br>
+     * 「视图」里放的是"界面长什么样"（主题、字号、目录栏），翻章是"读到哪" ——
+     * 两类东西混在一起，用户找翻章会去试「书签」「搜索」，唯独不会试「视图」。
+     *
+     * <p>快捷键用 {@code Alt + ← / →}：这个组合在几乎所有阅读器里都是翻页，
+     * 用户的肌肉记忆可以直接迁移；而且它不会和文本输入冲突
+     * （搜索框里按左箭头仍然是移动光标，因为 Alt 改变了它的语义）。
+     */
+    private MenuItem[] buildReadingMenuItems() {
+        MenuItem previous = new MenuItem("上一章");
+        previous.setAccelerator(KeyCombination.keyCombination("Alt+Left"));
+        previous.setOnAction(e -> stepChapter(-1));
+
+        MenuItem next = new MenuItem("下一章");
+        next.setAccelerator(KeyCombination.keyCombination("Alt+Right"));
+        next.setOnAction(e -> stepChapter(1));
+
+        return new MenuItem[]{previous, next};
     }
 
     /** 主题子菜单：一组单选菜单项。 */
@@ -411,11 +504,21 @@ public class ReaderView extends BorderPane {
         }
     }
 
-    private VBox buildBookInfoBar() {
+    private HBox buildBookInfoBar() {
         bookTitleLabel.getStyleClass().add("reader-book-title");
         bookMetaLabel.getStyleClass().add("reader-book-meta");
 
-        VBox bar = new VBox(4, bookTitleLabel, bookMetaLabel);
+        VBox titles = new VBox(4, bookTitleLabel, bookMetaLabel);
+        // 书名可以很长，让这一栏吃掉全部余量，右边的开关才会稳稳贴着右边缘
+        HBox.setHgrow(titles, Priority.ALWAYS);
+
+        sidebarToggle.getStyleClass().add("sidebar-toggle");
+        // 书架态没有目录栏可收，这个开关在那种状态下是关掉的（见 showBookshelf）
+        sidebarToggle.setFocusTraversable(false);
+        sidebarToggle.setOnAction(e -> toggleSidebar());
+
+        HBox bar = new HBox(12, titles, sidebarToggle);
+        bar.setAlignment(Pos.CENTER_LEFT);
         bar.getStyleClass().add("reader-book-bar");
         return bar;
     }
@@ -570,9 +673,78 @@ public class ReaderView extends BorderPane {
         applyColumnWidth();
 
         SplitPane split = new SplitPane(sideTabs, readingPane);
-        split.setDividerPositions(0.24);
+        split.setDividerPositions(DEFAULT_DIVIDER);
         SplitPane.setResizableWithParent(sideTabs, Boolean.FALSE);
+        // 记住用户把分隔条拖到了哪。收起侧栏再展开时要还回这个位置，
+        // 而不是写死回 0.24 —— 习惯把目录拖宽的人，收起一次就被重置，这很烦。
+        // 只在"没在收起状态"时记录：收起时位置恒为 0，记下来下次展开就成了 0
+        split.getDividers().get(0).positionProperty().addListener((obs, oldValue, newValue) ->
+                rememberDivider(newValue.doubleValue()));
         return split;
+    }
+
+    /**
+     * 记住侧栏的分隔条位置。
+     *
+     * <p>两个条件都要挡：收起状态下位置是 0（记下来就等于把用户的习惯抹掉），
+     * 位置恰好为 0 同理 —— 那是"被收起了"，不是"用户想要 0 宽"。
+     */
+    private void rememberDivider(double position) {
+        if (sidebarCollapsed || position <= 0) {
+            return;
+        }
+        lastDividerPosition = position;
+    }
+
+    /**
+     * 收起 / 展开左侧目录栏。
+     *
+     * <p><b>为什么不是简单地 {@code setDividerPositions(0)}？</b><br>
+     * 因为 {@code TabPane} 自己的最小宽度是由三个标签（目录 / 书签 / 搜索）
+     * 撑出来的，收起时它会把分隔条顶在那个最小值上，根本到不了 0 ——
+     * 屏幕上会留下一条几十像素宽的"贴着标签文字的窄条"，比不收起还难看。
+     * 所以要把最小宽度和首选宽度一起压到 0，展开时再还原成"按内容计算"。
+     *
+     * <p>刻意<b>不动 {@code maxWidth}</b>：这样分隔条仍然留在最左边，
+     * 想用鼠标拖回来的用户拖得动 —— 开关和拖拽两条路都通，
+     * 不必强迫用户去找菜单。
+     */
+    private void toggleSidebar() {
+        setSidebarCollapsed(!sidebarCollapsed);
+    }
+
+    private void setSidebarCollapsed(boolean collapsed) {
+        if (readerPane == null) {
+            return;
+        }
+        if (collapsed == sidebarCollapsed) {
+            return;
+        }
+        if (collapsed) {
+            lastDividerPosition = currentDivider();
+            sidebarCollapsed = true;
+            sideTabs.setMinWidth(0);
+            sideTabs.setPrefWidth(0);
+            readerPane.setDividerPositions(0);
+        } else {
+            sidebarCollapsed = false;
+            sideTabs.setMinWidth(Region.USE_COMPUTED_SIZE);
+            sideTabs.setPrefWidth(Region.USE_COMPUTED_SIZE);
+            readerPane.setDividerPositions(lastDividerPosition);
+        }
+        sidebarToggle.setSelected(collapsed);
+        sidebarToggle.setText(collapsed ? "◨ 展开目录" : "◧ 收起目录");
+        statusLabel.setText(collapsed
+                ? "目录栏已收起（F9 展开）"
+                : "目录栏已展开");
+    }
+
+    private double currentDivider() {
+        if (readerPane == null || readerPane.getDividers().isEmpty()) {
+            return DEFAULT_DIVIDER;
+        }
+        double position = readerPane.getDividers().get(0).getPosition();
+        return position > 0 ? position : DEFAULT_DIVIDER;
     }
 
     /**
@@ -715,6 +887,8 @@ public class ReaderView extends BorderPane {
         bookMetaLabel.setText(store == null
                 ? "本地数据存储未启用：本次阅读不会被记录"
                 : "点击一本书打开    ·    「文件 → 导入文件夹…」批量添加");
+        // 书架态压根没有目录栏可收，开关留着会让人以为点了没反应
+        sidebarToggle.setDisable(true);
         statusLabel.setText("就绪");
         setStatusProgressVisible(false);
         statusProgressLabel.setText("");
@@ -943,6 +1117,7 @@ public class ReaderView extends BorderPane {
 
         // 数据齐了才把中心区切回阅读态。切早了会先闪一下空白的目录栏
         setCenter(readerPane);
+        sidebarToggle.setDisable(false);
 
         bookTitleLabel.setText(currentBook.title());
         bookMetaLabel.setText(buildBookMeta(result));
@@ -1028,7 +1203,11 @@ public class ReaderView extends BorderPane {
             // 所以这里刻意不做异步 —— 少一层复杂度，翻页响应还更即时
             Chapter loaded = parser.loadChapter(currentFile, chapter);
             contentBox.setAlignment(Pos.TOP_LEFT);
-            contentBox.getChildren().setAll(ChapterRenderer.render(loaded, settings, highlight));
+            List<Node> blocks = new ArrayList<>(ChapterRenderer.render(loaded, settings, highlight));
+            // 翻章条挂在正文的最后一个节点上，于是它跟着正文一起滚 ——
+            // 读到章末时它就在眼前，正常阅读时它在视口之外、不占屏幕
+            blocks.add(buildChapterNav(chapter));
+            contentBox.getChildren().setAll(blocks);
             currentChapterIndex = chapter.index();
             if (highlight == null || highlight.isEmpty()) {
                 restoreScroll(restoreRatio);
@@ -1043,6 +1222,72 @@ public class ReaderView extends BorderPane {
         } catch (BookParseException e) {
             showError("读取章节失败", e);
         }
+    }
+
+    /**
+     * 造当前章的章末翻章条。
+     *
+     * <p>上一章 / 下一章的标题从 {@link #chapters} 里取，不额外读文件 ——
+     * 章节目录里本来就有全部标题，为了显示一行预览再去解析两个章节是纯浪费。
+     *
+     * <p>下标越界时传 null：{@link ChapterNavBar} 会把标题位换成
+     * 「已经是第一章了」之类的说明，并把按钮置灰。
+     */
+    private ChapterNavBar buildChapterNav(Chapter chapter) {
+        int index = chapter.index();
+        return new ChapterNavBar(index, chapters.size(),
+                titleAt(index - 1), titleAt(index + 1), this::goToChapter);
+    }
+
+    /** 取某一章的标题；下标越界返回 null（"没有这一章"）。 */
+    private String titleAt(int index) {
+        return (index < 0 || index >= chapters.size()) ? null : chapters.get(index).title();
+    }
+
+    /**
+     * 跳到指定章，从章首开始读。
+     *
+     * <p>它和"点目录里的章节"走<b>完全同一条路</b>：改列表的选中项，
+     * 由那个选中监听器去渲染。刻意不在这里复制一份渲染逻辑 ——
+     * 两份的话，"点目录"和"按翻章按钮"迟早会跑出差异
+     * （比如一个记得清掉搜索高亮词、另一个把高亮带到了新章节）。
+     */
+    private void goToChapter(int target) {
+        if (target < 0 || target >= chapters.size()) {
+            return;
+        }
+        if (chapterList.getSelectionModel().getSelectedIndex() == target) {
+            // 已经停在目标章上：选中项没变化，监听器不会触发，
+            // 得自己把视口拉回章首，否则按钮按下去像是没反应
+            restoreScroll(0);
+            return;
+        }
+        chapterList.getSelectionModel().select(target);
+        chapterList.scrollTo(target);
+    }
+
+    /**
+     * 相对翻章：{@code delta} 为 +1 下一章、-1 上一章。
+     *
+     * <p>到头的判断放在这里而不是靠 {@link #goToChapter} 的越界检查，
+     * 是为了能在状态栏说一句"已经是最后一章了" —— 否则用户按了没反应，
+     * 只会以为快捷键没生效。
+     */
+    private void stepChapter(int delta) {
+        if (chapters.isEmpty() || currentChapterIndex < 0) {
+            statusLabel.setText("先打开一本书再翻章");
+            return;
+        }
+        int target = currentChapterIndex + delta;
+        if (target < 0) {
+            statusLabel.setText("已经是第一章了");
+            return;
+        }
+        if (target >= chapters.size()) {
+            statusLabel.setText("已经是最后一章了（全书读完）");
+            return;
+        }
+        goToChapter(target);
     }
 
     /**
@@ -1369,6 +1614,14 @@ public class ReaderView extends BorderPane {
 
         if (previous.theme() != settings.theme()) {
             applyTheme();
+            // 设置窗口是独立的 Scene，要单独换一遍样式表。
+            // 同时把新主题<b>同步回面板</b>：面板内部持有一份设置副本，
+            // 不同步的话它还带着旧主题，用户接下来拖一下滑块，
+            // 那份旧主题就会随着改动一起被"应用"回来 —— 表现为改了主题又自己跳回去
+            if (settingsWindow != null && settingsWindow.isShowing()) {
+                settingsWindow.reload(settings);
+                settingsWindow.applyTheme(settings.theme());
+            }
         }
         syncThemeMenuSelection();
         persistSettings();
@@ -1397,9 +1650,38 @@ public class ReaderView extends BorderPane {
         statusLabel.setText("字号：" + settings.fontSize() + " px");
     }
 
-    private void openSettingsDialog() {
-        SettingsDialog dialog = new SettingsDialog(settings, windowOrNull());
-        dialog.showAndWait().ifPresent(this::applySettings);
+    /**
+     * 打开「阅读设置」窗口。
+     *
+     * <p>它现在是<b>非模态</b>的（见 {@link SettingsWindow}），所以这里不做
+     * {@code showAndWait()} —— 面板自己会在用户改动时回调 {@link #applySettings}，
+     * 主窗口的正文随即重排。用户不需要"改完点确定"。
+     *
+     * <p>窗口只在第一次点开时创建，之后反复复用同一个实例。这样
+     * 位置、大小会被窗口管理器记住，也省下重复枚举系统字体列表的开销。
+     * 每次打开前先 {@code reload} 一次：用户可能在菜单里点过「增大字号」，
+     * 窗口里必须显示真正生效的值。
+     */
+    private void openSettingsWindow() {
+        if (settingsWindow == null) {
+            settingsWindow = new SettingsWindow(windowOrNull(), settings, this::applySettings);
+        }
+        settingsWindow.reload(settings);
+        settingsWindow.applyTheme(settings.theme());
+        settingsWindow.showFor();
+    }
+
+    /**
+     * 关掉所有附属窗口。主窗口关闭时调用。
+     *
+     * <p>不做这一步的话，程序会"关不掉"：JavaFX 默认在<b>最后一个</b>窗口关闭时才退出，
+     * 而设置窗口是非模态的 —— 主窗口关了它还开着，进程就一直留着，
+     * 用户看到的现象是"点了叉，阅读器还在任务栏里"。
+     */
+    public void closeAuxiliaryWindows() {
+        if (settingsWindow != null && settingsWindow.isShowing()) {
+            settingsWindow.hide();
+        }
     }
 
     private void applyTheme() {
@@ -1542,7 +1824,7 @@ public class ReaderView extends BorderPane {
 
     private void showAbout() {
         Alert alert = themedAlert(Alert.AlertType.INFORMATION);
-        alert.setHeaderText("轻读阅读器 0.2.0");
+        alert.setHeaderText("轻读阅读器 " + VERSION);
         alert.setContentText("""
                 一个本地优先的中文小说阅读器。
 
@@ -1552,13 +1834,33 @@ public class ReaderView extends BorderPane {
                 · 按字节偏移量按需加载正文
                 · 阅读进度与书签自动保存
                 · 全书全文搜索（Ctrl + F），结果可点击跳转并高亮
-                · 日间 / 护眼 / 羊皮纸 / 夜间 四种主题
+                · 章末翻章（Alt + ← / →）、目录栏可收起（F9）
+                · 六种主题：""" + themeNames() + """
 
                 数据位置：""" + (store == null ? "（本次运行未启用）" : store.databaseFile())
                 + """
 
                 本软件只读取你自己合法持有的本地文件，不提供任何书源或联网下载功能。""");
         alert.showAndWait();
+    }
+
+    /**
+     * 把主题名拼成"日间 / 护眼 / …"。
+     *
+     * <p>从 {@link Theme#values()} 现算，而不是写死一句字符串 ——
+     * 上一版这里写的是"日间 / 护眼 / 羊皮纸 / 夜间 四种主题"，
+     * 加了两个主题之后它就<b>悄悄过期了</b>，而且这种"文案过期"
+     * 没有任何东西会提醒你去改。
+     */
+    private static String themeNames() {
+        StringBuilder sb = new StringBuilder();
+        for (Theme theme : Theme.values()) {
+            if (sb.length() > 0) {
+                sb.append(" / ");
+            }
+            sb.append(theme.displayName());
+        }
+        return sb.append(" 共 ").append(Theme.values().length).append(" 种").toString();
     }
 
     /** 持久化失败时的提示：写日志，并且只在状态栏说一次，不打断阅读。 */

@@ -33,6 +33,13 @@
     -qd-selection-text: #14314f;
     -qd-hover-bg:       #e8e5dc;
 
+    /* 强调色（-qd-accent）上的文字色。
+
+       为什么不能直接写死"按钮上是白字"？因为深色主题的强调色是<b>亮</b>蓝，
+       白字压上去几乎看不见，得用深字。所以它必须是一个"跟着主题变"的变量 ——
+       浅色主题给白色，深色主题给深色。六个主题各定义一份。 */
+    -qd-on-accent:      #ffffff;
+
     /* 需要"提个醒"的颜色（目前只用在书架的"文件缺失"上）。
        和 -qd-accent 分开是有意的：强调色代表"可点的、正向的"，
        这个代表"出问题了"，混用会让两种语义分不开。 */
@@ -473,9 +480,13 @@
 .reader-search-button {
     -fx-font-size: 13px;
     -fx-background-color: -qd-accent;
-    -fx-text-fill: -qd-selection-text;
+    /* 用 -qd-on-accent 而不是 -qd-selection-text：
+       前者是专门为"压在强调色上"挑的，后者只保证"和选中底分得开"。
+       深色主题下这两者的差别最明显 —— 那时强调色是亮的，必须用深字。 */
+    -fx-text-fill: -qd-on-accent;
     -fx-background-radius: 4;
     -fx-padding: 5 12 5 12;
+    -fx-cursor: hand;
 }
 
 /* "找到 12 章 · 候选 12 章 · 耗时 54 ms" 这类提示。
@@ -625,15 +636,257 @@
     -fx-background-color: transparent;
 }
 
-/* ===================== 对话框（设置 / 关于） ===================== */
+/* ===================== 对话框（Alert / 关于 / 确认删除） =====================
 
-.settings-dialog {
+   ★ 这一段是补上的一个真缺陷，不是美化。
+
+   JavaFX 的 Alert / Dialog 默认吃 Modena 自带的外观，而且它<b>有自己的
+   Scene</b>，不继承主窗口的样式表。ThemeStyles.apply(DialogPane, ...) 只负责
+   把"主题文件"塞进去 —— 而主题文件（theme-*.css）里只定义了 -qd-* 颜色，
+   从来没有一条规则去<b>使用</b>它们画对话框。
+
+   结果就是：主窗口是羊皮纸，弹出来的框是一块惨白的系统灰。
+   夜间主题之所以看起来还好，是因为它顺带覆盖了 -fx-base 这类内置根变量，
+   把 Modena 一起带深了；三个浅色主题没有这一步，所以问题只在它们身上出现。
+
+   下面这些规则全部走 -qd-* 变量，六个主题因此自动统一。 */
+.dialog-pane {
     -fx-background-color: -qd-panel-bg;
+    -fx-border-color: -qd-border;
+    -fx-border-width: 1;
+    -fx-padding: 0;
+    /* 给一个宽度下限：默认宽度按内容算，一句短提示会挤成很窄的竖条，
+       标题和正文全在换行，看着像坏掉了 */
+    -fx-min-width: 400px;
+}
+
+/* 标题区。Alert 的 headerText 落在这里。 */
+.dialog-pane > .header-panel {
+    -fx-background-color: -qd-panel-subtle;
+    -fx-padding: 14 20 14 20;
+}
+
+.dialog-pane > .header-panel > .label {
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -qd-text-heading;
+}
+
+.dialog-pane > .content {
+    -fx-padding: 16 20 16 20;
+}
+
+.dialog-pane > .content.label {
+    -fx-font-size: 13px;
+    -fx-text-fill: -qd-text;
+}
+
+/* 兜底给所有后代 Label 上色：Alert 的正文是 Label，
+   但自定义内容（比如设置面板）里会有 GridPane / VBox 套 Label，
+   只写 > .content.label 会漏掉后者，出现"标题跟着主题变、正文没变" */
+.dialog-pane .label {
+    -fx-text-fill: -qd-text;
+}
+
+.dialog-pane > .button-bar > .container {
+    -fx-background-color: -qd-panel-bg;
+    -fx-padding: 4 20 16 20;
+}
+
+.dialog-pane .button {
+    -fx-font-size: 13px;
+    -fx-background-color: -qd-panel-subtle;
+    -fx-text-fill: -qd-text;
+    -fx-border-color: -qd-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+    -fx-padding: 6 18 6 18;
+    -fx-cursor: hand;
+}
+
+.dialog-pane .button:hover {
+    -fx-background-color: -qd-hover-bg;
+}
+
+/* 默认按钮（回车触发的那一个）用强调色，让"主要动作"一眼可辨。
+   Modena 默认只给它一圈蓝描边，在羊皮纸/雾蓝/护眼这些主题下会跑调。 */
+.dialog-pane .button:default {
+    -fx-background-color: -qd-accent;
+    -fx-text-fill: -qd-on-accent;
+    -fx-border-color: -qd-accent;
+}
+
+.dialog-pane .button:default:hover {
+    -fx-opacity: 0.88;
+}
+
+/* ===================== 弹出层（菜单栏下拉 / 右键菜单） =====================
+
+   菜单下拉和右键菜单同样是独立的弹出窗口，默认也是 Modena 的浅色。
+   不单独指定的话，夜间/墨黑主题下会从深色界面里弹出一块白的。 */
+.context-menu {
+    -fx-background-color: -qd-panel-bg;
+    -fx-border-color: -qd-border;
+    -fx-border-width: 1;
+    -fx-padding: 4 0 4 0;
+}
+
+.context-menu .menu-item {
+    -fx-padding: 6 18 6 18;
+}
+
+.context-menu .menu-item .label {
+    -fx-font-size: 13px;
+    -fx-text-fill: -qd-text;
+}
+
+.context-menu .menu-item:focused {
+    -fx-background-color: -qd-selection-bg;
+}
+
+.context-menu .menu-item:focused .label {
+    -fx-text-fill: -qd-selection-text;
+}
+
+/* 禁用项（「最近打开」为空时的那行提示、"字号已是最大"之类）要弱化，
+   但不能弱到看不清 —— 它常常是唯一告诉用户"为什么点不动"的东西 */
+.context-menu .menu-item:disabled .label {
+    -fx-text-fill: -qd-text-faint;
+}
+
+/* 分隔线。默认那条是浅灰，压在深色主题上几乎看不见。 */
+.context-menu .separator:horizontal .line {
+    -fx-border-color: -qd-border transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+}
+
+/* 菜单栏上那一排"文件 / 书签 / 视图"的文字也跟着主题走 */
+.reader-menubar .label {
+    -fx-text-fill: -qd-text;
+}
+
+/* ===================== 章末翻章导航 =====================
+
+   放在正文的最后，随正文一起滚动 —— 不做成常驻的浮动条，
+   是为了阅读时界面保持干净（不想滚到底也能翻章，见 Alt + ← / →）。 */
+.chapter-nav {
+    -fx-padding: 28 0 4 0;
+    -fx-border-color: -qd-border;
+    -fx-border-width: 1 0 0 0;
+}
+
+.chapter-nav-button {
+    -fx-font-size: 13px;
+    -fx-background-color: transparent;
+    -fx-text-fill: -qd-accent;
+    -fx-border-color: -qd-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+    -fx-padding: 7 20 7 20;
+    -fx-cursor: hand;
+}
+
+.chapter-nav-button:hover {
+    -fx-background-color: -qd-hover-bg;
+    -fx-border-color: -qd-accent;
+}
+
+/* 到头了（第一章没有上一章、最后一章没有下一章）。
+   按钮留着但置灰，而不是让它消失 —— 位置不跳动，
+   用户也一眼看得出"这是边界"，而不是"这个功能坏了"。 */
+.chapter-nav-button:disabled {
+    -fx-opacity: 0.4;
+    -fx-cursor: default;
+}
+
+/* 中间那句"第 12 / 1474 章"，只是位置提示，不抢眼 */
+.chapter-nav-position {
+    -fx-font-size: 12px;
+    -fx-text-fill: -qd-text-faint;
+    -fx-padding: 0 18 0 18;
+}
+
+/* 按钮下面那行目标章节标题。用 warning 色会误读成"出错了"，
+   用正文色又太重，所以取 muted —— 它是"顺带告诉你"的信息。 */
+.chapter-nav-title {
+    -fx-font-size: 11px;
+    -fx-text-fill: -qd-text-muted;
+}
+
+/* ===================== 侧栏开关 =====================
+
+   放在「书籍信息条」的右侧，而不是侧栏自己的标题栏上 ——
+   因为侧栏一收起，放在侧栏里的开关就跟着没了，用户再也点不回来。 */
+.sidebar-toggle {
+    -fx-font-size: 12px;
+    -fx-background-color: transparent;
+    -fx-text-fill: -qd-text-muted;
+    -fx-border-color: -qd-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
+    -fx-padding: 5 12 5 12;
+    -fx-cursor: hand;
+}
+
+.sidebar-toggle:hover {
+    -fx-background-color: -qd-hover-bg;
+    -fx-text-fill: -qd-text-heading;
+}
+
+/* 收起状态给它一点强调色：既表示"当前是收起"，也表示"点一下能展开" */
+.sidebar-toggle:selected {
+    -fx-background-color: -qd-selection-bg;
+    -fx-text-fill: -qd-selection-text;
+    -fx-border-color: -qd-accent;
+}
+
+/* ===================== 阅读设置窗口 =====================
+
+   它现在是独立的「非模态」窗口（不再是 Dialog）：不锁主窗口，
+   用户可以一边拖滑块、一边看主窗口的正文跟着重排。
+   代价是它有自己的 Scene，样式表不继承主窗口，必须靠
+   ThemeStyles.apply(Scene, ...) 单独装一遍 —— 漏了就是"主题是墨黑、
+   设置窗口还是白的"。 */
+.settings-window {
+    -fx-background-color: -qd-window-bg;
+}
+
+.settings-header {
+    -fx-background-color: -qd-panel-bg;
+    -fx-border-color: -qd-border;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 12 16 12 16;
+}
+
+.settings-header-title {
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -qd-text-heading;
+}
+
+/* 一句"改动立刻生效"，否则用户会到处找一个不存在的"确定"按钮 */
+.settings-hint {
+    -fx-font-size: 11px;
+    -fx-text-fill: -qd-text-faint;
+}
+
+.settings-pane {
+    -fx-background-color: -qd-window-bg;
 }
 
 .settings-label {
     -fx-font-size: 13px;
     -fx-text-fill: -qd-text;
+}
+
+/* 「18 px」这种当前值。用弱化色 —— 它是滑块的读数，不是标题 */
+.settings-value {
+    -fx-font-size: 12px;
+    -fx-text-fill: -qd-text-muted;
+    -fx-min-width: 52px;
 }
 
 .settings-preview {
@@ -642,3 +895,64 @@
     -fx-border-width: 1;
     -fx-padding: 12;
 }
+
+/* 设置窗口里的按钮。它不在 .dialog-pane 下，所以那套规则管不到，
+   必须单独写一遍 —— 否则在墨黑主题里会冒出两个 Modena 的浅色按钮 */
+.settings-pane .button {
+    -fx-font-size: 13px;
+    -fx-background-color: -qd-panel-subtle;
+    -fx-text-fill: -qd-text;
+    -fx-border-color: -qd-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 3;
+    -fx-background-radius: 3;
+    -fx-padding: 6 18 6 18;
+    -fx-cursor: hand;
+}
+
+.settings-pane .button:hover {
+    -fx-background-color: -qd-hover-bg;
+}
+
+/* 唯一的"收尾动作"，用强调色让它可辨 */
+.settings-pane .button.settings-close {
+    -fx-background-color: -qd-accent;
+    -fx-text-fill: -qd-on-accent;
+    -fx-border-color: -qd-accent;
+}
+
+.settings-pane .button.settings-close:hover {
+    -fx-opacity: 0.88;
+}
+
+/* 滑块与下拉框的默认外观是 Modena 的浅色，在深色主题下很跳。
+   只改必要的几处，不重做整个控件皮肤 —— 拖拽把手用强调色，
+   轨道用面板色，读数在旁边的 .settings-value 里已经有了。 */
+.settings-pane .slider .track {
+    -fx-background-color: -qd-panel-subtle;
+    -fx-border-color: -qd-border;
+    -fx-border-width: 1;
+}
+
+.settings-pane .slider .thumb {
+    -fx-background-color: -qd-accent;
+}
+
+.settings-pane .combo-box {
+    -fx-background-color: -qd-panel-subtle;
+    -fx-border-color: -qd-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 3;
+    -fx-border-radius: 3;
+}
+
+.settings-pane .combo-box .list-cell {
+    -fx-text-fill: -qd-text;
+    -fx-background-color: transparent;
+    -fx-font-size: 13px;
+}
+
+.settings-pane .combo-box .arrow {
+    -fx-background-color: -qd-text-muted;
+}
+

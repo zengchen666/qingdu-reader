@@ -1,33 +1,46 @@
-/* 护眼主题：淡绿底。
+/* 护眼主题：灰绿底。
    绿色能降低屏幕对比度带来的刺激，是中文阅读器里最常见的"护眼模式"。
-   注意绿色的明度要和日间接近（都在 90% 上下），否则切过来会觉得
-   整个界面突然暗了一档，反而更累。 */
+
+   ★ 这里刻意做得"不那么绿"。
+   早期版本用的是饱和绿（底色 #d3e8d5、面板 #c3ddc6），实测反馈是"太绿了" ——
+   饱和度一上来，底色就从"安静的背景"变成了"有存在感的一块绿"，
+   眼睛反而会一直注意到它，跟"护眼"的初衷相反。
+   现在往灰里调：底色 #e9ede6 只比中性灰多一点点绿意（R 与 G 只差 4），
+   是"看起来不冷"的程度，而不是"看起来是绿的"。
+
+   另一个保持不变的点：明度仍和日间接近（都在 91% 上下），
+   否则切过来会觉得整个界面突然暗了一档，反而更累。 */
 .root {
-    -qd-window-bg:      #d3e8d5;
-    -qd-panel-bg:       #c3ddc6;
-    -qd-panel-subtle:   #b6d3ba;
-    -qd-border:         #a7c6ac;
+    -qd-window-bg:      #e9ede6;
+    -qd-panel-bg:       #dfe4db;
+    -qd-panel-subtle:   #d3d9cf;
+    -qd-border:         #c3c9bd;
 
-    -qd-content-bg:     #d3e8d5;
-    -qd-text:           #26332a;
-    -qd-text-heading:   #17231a;
-    -qd-text-muted:     #4f6b56;
-    -qd-text-faint:     #74907b;
+    -qd-content-bg:     #e9ede6;
+    -qd-text:           #333a2f;
+    -qd-text-heading:   #1f251d;
+    -qd-text-muted:     #6b7367;
+    -qd-text-faint:     #8b938a;
 
-    -qd-accent:         #3f7d52;
-    -qd-selection-bg:   #a9d2b0;
-    -qd-selection-text: #16301d;
-    -qd-hover-bg:       #c5dfc8;
+    -qd-accent:         #55785c;
+    -qd-selection-bg:   #ccd8c6;
+    -qd-selection-text: #22301f;
+    -qd-hover-bg:       #dde3d7;
+
+    /* 强调色上的文字（主按钮、进度条之类）。见 base.css 里的说明。 */
+    -qd-on-accent:      #ffffff;
 
     /* 绿底上配砖红。刻意避开正红：正红压在绿上会产生"圣诞配色"的错觉，
-       而且这个标记只是提示性的，不该抢走整个界面的注意力。 */
-    -qd-warn:           #a94438;
+       而且这个标记只是提示性的，不该抢走整个界面的注意力。
+       底色降饱和之后，这个红也跟着降了一档，否则会成为全界面最跳的颜色。 */
+    -qd-warn:           #a3524a;
 
-    /* 搜索结果高亮。绿底上继续用琥珀色（绿和橙是邻近色系，
+    /* 搜索结果高亮。灰绿底上继续用琥珀色（绿和橙是邻近色系，
        不会像红色那样抢走注意力），只把明度压深一点保证对比度。 */
-    -qd-highlight:      #94551a;
+    -qd-highlight:      #8f5218;
 
-    /* 护眼主题里滑块偏"草绿"，不用纯灰 —— 灰色压在绿底上会显脏 */
-    -qd-scroll-thumb:       #a9c6ad;
-    -qd-scroll-thumb-hover: #8fb394;
+    /* 滑块用偏灰的绿，不用纯灰 —— 纯灰压在灰绿底上会显脏。
+       注意它比早期那支 #a9c6ad 灰得多，才跟得上降过饱和的底色。 */
+    -qd-scroll-thumb:       #c8cfc2;
+    -qd-scroll-thumb-hover: #b2baad;
 }

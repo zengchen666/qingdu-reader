@@ -7,10 +7,7 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
-import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
-import javafx.scene.control.Dialog;
-import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.Slider;
 import javafx.scene.layout.GridPane;
@@ -19,30 +16,38 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.scene.text.Font;
-import javafx.stage.Window;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
- * 「阅读设置」对话框：字体、字号、段间距。
+ * 「阅读设置」的内容面板：字体、字号、段间距、预览。
+ *
+ * <p><b>它是"改一项、立刻生效"的。</b>没有确定 / 取消按钮 ——
+ * 这个面板被放进一个<b>非模态</b>窗口（{@link SettingsWindow}），
+ * 用户可以一边调字号、一边看主窗口里的正文跟着变。
+ * 模态对话框那种"调完点确定才生效"的模式，在这里是多余的：
+ * 非模态窗口本来就不会挡住正文，即时反馈才是它的价值所在。
+ *
+ * <p>代价是"取消"没法实现了。用户想回到改动前的样子，只能靠
+ * 「恢复默认」或自己再调回来。这个取舍是清楚的：调字号这类操作是
+ * <b>可逆的试错</b>（拖回去就行），不是"提交一份表单"。
  *
  * <p><b>预览区为什么直接调用 {@link ChapterRenderer}？</b><br>
- * 这是这个对话框设计上最要紧的一点。如果预览用另一套代码画（哪怕只是
+ * 这是整个面板设计上最要紧的一点。如果预览用另一套代码画（哪怕只是
  * "差不多"地设一下字号），那它早晚会和真正的正文渲染<b>跑偏</b>：
  * 有人改了正文的排版规则、忘了改预览，用户就会看到"预览和实际不一样"。
+ * 这里让预览走<b>和正文完全相同的那条渲染路径</b>，只是喂给它一段示例文字。
+ * 于是"预览是否准确"就不再需要人去维护，它<em>结构上</em>不可能不准。
  *
- * <p>这里让预览走<b>和正文完全相同的那条渲染路径</b>，
- * 只是喂给它一段示例文字。于是"预览是否准确"就不再需要人去维护，
- * 它<em>结构上</em>不可能不准。
- *
- * <p>对话框本身用 {@code Dialog<ReaderSettings>} 而不是自己拼一个
- * {@code Stage}：JavaFX 的 {@code Dialog} 已经处理好了模态、按钮栏、
- * 键盘 Esc 关闭、窗口大小这些琐事，自己做一个只会多出一堆边界 bug。
+ * <p><b>通知的时机</b>：面板内部灌值（{@link #applyToControls}）时会
+ * 临时闭麦，不往外抛改动通知 —— 否则每打开一次设置窗口，主界面就会
+ * 白白重排一次正文，滚动位置还会轻微抖一下。
  */
-public class SettingsDialog extends Dialog<ReaderSettings> {
+public final class SettingsPane extends VBox {
 
     /** 字体下拉里表示"不指定，跟随系统"的那一项。 */
     private static final String SYSTEM_DEFAULT_LABEL = "系统默认";
@@ -80,7 +85,7 @@ public class SettingsDialog extends Dialog<ReaderSettings> {
                     new ChapterBlock.Paragraph(
                             "夜色像一块浸了水的布，沉沉地压在屋顶上。这是一段用来试字号和字体的示例文字。"),
                     new ChapterBlock.Paragraph(
-                            "汉字的笔画密度比拉丁字母高得多，所以同样的字号，中文看起来会比英文更\"满\"一些。")));
+                            "汉字的笔画密度比拉丁字母高得多，所以同样的字号，中文看起来会比英文更「满」一些。")));
 
     private final ComboBox<String> fontBox = new ComboBox<>();
     private final Slider sizeSlider = new Slider(
@@ -93,40 +98,58 @@ public class SettingsDialog extends Dialog<ReaderSettings> {
     private final Label spacingValueLabel = new Label();
     private final VBox previewBox = new VBox();
 
-    private final ReaderSettings original;
-    private ReaderSettings pending;
+    private final Consumer<ReaderSettings> onChange;
+    private ReaderSettings current;
 
-    public SettingsDialog(ReaderSettings current, Window owner) {
-        this.original = (current == null) ? ReaderSettings.defaults() : current;
-        this.pending = original;
+    /**
+     * 正在"灌值"（面板自己改控件）。
+     *
+     * <p>灌值会触发控件的监听器，如果不挡住，就会把"面板刚被同步成 X"
+     * 当成"用户把设置改成了 X"再抛出去 —— 打开窗口时主界面白白重排一遍正文。
+     */
+    private boolean loading;
 
-        setTitle("阅读设置");
-        setResizable(true);
-        if (owner != null) {
-            initOwner(owner);
-        }
+    /**
+     * @param initial  打开时的设置
+     * @param onChange 用户改动静时的回调（灌值时不触发）
+     * @param onClose  「关闭」按钮的动作
+     */
+    public SettingsPane(ReaderSettings initial, Consumer<ReaderSettings> onChange, Runnable onClose) {
+        this.onChange = (onChange == null) ? settings -> { } : onChange;
+        this.current = (initial == null) ? ReaderSettings.defaults() : initial;
 
-        DialogPane pane = getDialogPane();
-        pane.getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-        pane.setContent(buildContent());
-        // 对话框有自己的 Scene，不会继承主窗口的样式表，必须单独装一遍
-        ThemeStyles.apply(pane, original.theme());
-        // 让"确定"成为回车键的默认动作
-        if (pane.lookupButton(ButtonType.OK) instanceof Button okButton) {
-            okButton.setDefaultButton(true);
-        }
+        getStyleClass().add("settings-pane");
 
-        // 把控件上的当前值灌进去（注意要在 setContent 之后，
-        // 否则触发监听器时预览区还不存在）
-        applyToControls(original);
+        Node header = buildHeader();
+        Node form = buildForm();
+        Node preview = buildPreviewSection();
+        Node footer = buildFooter(onClose);
+        // 只有预览区吃掉纵向余量：窗口被拉高时，多出来的高度应该给预览
+        // （它是唯一"越长越有用"的部分），而不是在各块之间平均分掉
+        VBox.setVgrow(preview, Priority.ALWAYS);
+        getChildren().setAll(header, form, preview, footer);
 
-        // 点确定才把结果交出去；点取消或直接关窗口时返回 null（showAndWait 会得到空 Optional）
-        setResultConverter(button -> button == ButtonType.OK ? pending : null);
+        // 灌值必须在控件已经进入场景之后（预览区要能算出行高）。
+        // 顺序错了不报错，只是预览一片空白 —— 这类顺序依赖在 JavaFX 里很常见
+        applyToControls(this.current);
     }
 
     // ==================== 界面 ====================
 
-    private Node buildContent() {
+    /** 顶部一条说明。窗口自己有标题栏，"改动立刻生效"这句话得在里面说。 */
+    private Node buildHeader() {
+        Label title = new Label("阅读设置");
+        title.getStyleClass().add("settings-header-title");
+
+        Label hint = new Label("改动立刻生效，不需要保存");
+        hint.getStyleClass().add("settings-hint");
+
+        VBox header = new VBox(3, title, hint);
+        header.getStyleClass().add("settings-header");
+        return header;
+    }
+
+    private Node buildForm() {
         GridPane grid = new GridPane();
         grid.setHgap(12);
         grid.setVgap(14);
@@ -138,6 +161,8 @@ public class SettingsDialog extends Dialog<ReaderSettings> {
         // 数值列右对齐，三行文字的左边缘才能对齐
         sizeValueLabel.setAlignment(Pos.CENTER_RIGHT);
         spacingValueLabel.setAlignment(Pos.CENTER_RIGHT);
+        sizeValueLabel.getStyleClass().add("settings-value");
+        spacingValueLabel.getStyleClass().add("settings-value");
 
         grid.add(label("字体"), 0, 0);
         grid.add(fontBox, 1, 0);
@@ -150,23 +175,40 @@ public class SettingsDialog extends Dialog<ReaderSettings> {
         grid.add(label("段间距"), 0, 2);
         grid.add(spacingSlider, 1, 2);
         grid.add(spacingValueLabel, 2, 2);
+        return grid;
+    }
 
+    private Node buildPreviewSection() {
         Label previewTitle = label("预览");
         previewBox.getStyleClass().add("settings-preview");
         previewBox.setPadding(new Insets(14, 16, 16, 16));
 
+        VBox section = new VBox(8, previewTitle, previewBox);
+        section.setPadding(new Insets(6, 20, 12, 20));
+        VBox.setVgrow(previewBox, Priority.ALWAYS);
+        return section;
+    }
+
+    private Node buildFooter(Runnable onClose) {
         Button resetButton = new Button("恢复默认");
-        resetButton.setOnAction(e -> applyToControls(ReaderSettings.defaults()));
+        resetButton.setOnAction(e -> resetToDefaults());
+
+        Button closeButton = new Button("关闭");
+        closeButton.getStyleClass().add("settings-close");
+        closeButton.setDefaultButton(true);
+        closeButton.setOnAction(e -> {
+            if (onClose != null) {
+                onClose.run();
+            }
+        });
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        HBox footer = new HBox(resetButton, spacer);
-        footer.setPadding(new Insets(10, 0, 0, 0));
 
-        VBox root = new VBox(10, grid, previewTitle, previewBox, footer);
-        root.getStyleClass().add("settings-dialog");
-        root.setPadding(new Insets(0, 16, 12, 16));
-        return root;
+        HBox footer = new HBox(10, resetButton, spacer, closeButton);
+        footer.setAlignment(Pos.CENTER_RIGHT);
+        footer.setPadding(new Insets(4, 20, 16, 20));
+        return footer;
     }
 
     private void prepareFontBox() {
@@ -195,47 +237,80 @@ public class SettingsDialog extends Dialog<ReaderSettings> {
         return l;
     }
 
+    // ==================== 数据流 ====================
+
     /**
-     * 把设置值灌进控件。
+     * 把外部的设置灌进控件。
      *
-     * <p>灌值的过程中会触发控件的监听器，于是预览会跟着刷新。
-     * 这依赖"控件已经放进场景了"这个前提，所以调用点必须放在
-     * {@code setContent} 之后 —— 这类顺序依赖是 JavaFX 里最容易踩的坑之一：
-     * 顺序错了不会报错，只是预览区一片空白。
+     * <p>窗口每次打开前会调它一次，保证显示的是"当前真正生效的值" ——
+     * 用户可能刚在菜单里点过「增大字号」，设置窗口里必须是新值。
+     *
+     * <p>灌值期间闭麦（见 {@link #loading}）。预热预览仍然会跑，
+     * 因为那是本面板自己的事，不涉及主界面。
      */
-    private void applyToControls(ReaderSettings settings) {
-        pending = settings;
+    public void applyToControls(ReaderSettings settings) {
+        loading = true;
+        try {
+            current = (settings == null) ? ReaderSettings.defaults() : settings;
 
-        fontBox.setValue(settings.fontFamily() == null ? SYSTEM_DEFAULT_LABEL : settings.fontFamily());
-        if (!fontBox.getItems().contains(fontBox.getValue())) {
-            // 数据库里记的字体在这台机器上没装（比如换了电脑），
-            // 把它临时加进列表，免得下拉框显示成空白、用户一头雾水
-            fontBox.getItems().add(0, fontBox.getValue());
+            fontBox.setValue(current.fontFamily() == null ? SYSTEM_DEFAULT_LABEL : current.fontFamily());
+            if (!fontBox.getItems().contains(fontBox.getValue())) {
+                // 数据库里记的字体在这台机器上没装（比如换了电脑），
+                // 把它临时加进列表，免得下拉框显示成空白、用户一头雾水
+                fontBox.getItems().add(0, fontBox.getValue());
+            }
+            sizeSlider.setValue(current.fontSize());
+            spacingSlider.setValue(current.paragraphSpacing());
+
+            refreshValueLabels();
+            refreshPreview();
+        } finally {
+            loading = false;
         }
-        sizeSlider.setValue(settings.fontSize());
-        spacingSlider.setValue(settings.paragraphSpacing());
+    }
 
-        refreshValueLabels();
-        refreshPreview();
+    /**
+     * 当前面板上的设置。
+     *
+     * <p>主题不在这个面板里（主题菜单在「视图」下），所以它始终跟着
+     * 外部传进来的那一份走 —— {@link ReaderSettings#withTheme} 之外的三项
+     * 才是这里能改的东西。
+     */
+    public ReaderSettings currentSettings() {
+        return current;
+    }
+
+    private void resetToDefaults() {
+        applyToControls(ReaderSettings.defaults().withTheme(current.theme()));
+        publish();
     }
 
     private void onFontChanged() {
         String chosen = fontBox.getValue();
-        pending = pending.withFontFamily(SYSTEM_DEFAULT_LABEL.equals(chosen) ? null : chosen);
+        current = current.withFontFamily(SYSTEM_DEFAULT_LABEL.equals(chosen) ? null : chosen);
         refreshPreview();
+        publish();
     }
 
     private void onSliderChanged() {
-        pending = pending
+        current = current
                 .withFontSize((int) Math.round(sizeSlider.getValue()))
                 .withParagraphSpacing(Math.round(spacingSlider.getValue()));
         refreshValueLabels();
         refreshPreview();
+        publish();
+    }
+
+    private void publish() {
+        if (loading) {
+            return;
+        }
+        onChange.accept(current);
     }
 
     private void refreshValueLabels() {
-        sizeValueLabel.setText(pending.fontSize() + " px");
-        spacingValueLabel.setText((long) pending.paragraphSpacing() + " px");
+        sizeValueLabel.setText(current.fontSize() + " px");
+        spacingValueLabel.setText((long) current.paragraphSpacing() + " px");
     }
 
     /**
@@ -246,8 +321,8 @@ public class SettingsDialog extends Dialog<ReaderSettings> {
      * 行内样式里 —— 和正文区的分工完全一致。
      */
     private void refreshPreview() {
-        previewBox.setSpacing(pending.paragraphSpacing());
-        previewBox.getChildren().setAll(ChapterRenderer.render(PREVIEW_CHAPTER, pending));
+        previewBox.setSpacing(current.paragraphSpacing());
+        previewBox.getChildren().setAll(ChapterRenderer.render(PREVIEW_CHAPTER, current));
     }
 
     /**

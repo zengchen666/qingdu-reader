@@ -59,6 +59,11 @@ public class QingduApplication extends Application {
         applyWindowIcons(stage);
         stage.centerOnScreen();
 
+        // 关主窗口时把附属窗口（目前是「阅读设置」）一起收掉。
+        // 不这么做程序会关不掉：JavaFX 只在<b>最后一个</b>窗口关闭时才退出，
+        // 而设置窗口是非模态的 —— 主窗口关了它还开着，进程就留在任务栏里
+        stage.setOnCloseRequest(event -> readerView.closeAuxiliaryWindows());
+
         // 样式表要装到 Scene 上，而 Scene 是围绕 ReaderView 创建的，
         // 所以这一步只能在组装完成之后回调
         readerView.onSceneReady();

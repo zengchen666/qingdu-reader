@@ -38,19 +38,32 @@ public final class ThemeStyles {
     }
 
     /**
+     * 某个主题对应的样式表资源路径，形如 {@code /css/theme-dark.css}。
+     *
+     * <p>抽成方法是为了让"主题 → 文件"这个映射只有<b>一处</b>定义：
+     * 它既被 {@link #stylesheetsFor} 用来真正加载，
+     * 也被 {@code ThemeCssCompletenessTest} 用来做静态检查
+     * （每个主题都有文件、且定义了全部 -qd-* 变量）。
+     * 两边各写一份字符串的话，改了命名规则就会一边改一边漏。
+     */
+    static String themeSheetPath(Theme theme) {
+        Theme effective = (theme == null) ? Theme.defaultTheme() : theme;
+        return THEME_SHEET_PREFIX + effective.id() + ".css";
+    }
+
+    /**
      * 某个主题需要的全部样式表，顺序是「结构 → 配色」。
      *
      * <p>顺序有意义：主题表要放在后面，它才能覆盖 {@code base.css} 里
      * 那套兜底配色。JavaFX 对同一个选择器取最后一条匹配的规则。
      */
     public static List<String> stylesheetsFor(Theme theme) {
-        Theme effective = (theme == null) ? Theme.defaultTheme() : theme;
         List<String> sheets = new ArrayList<>(2);
         String base = resolve(BASE_SHEET);
         if (base != null) {
             sheets.add(base);
         }
-        String themeSheet = resolve(THEME_SHEET_PREFIX + effective.id() + ".css");
+        String themeSheet = resolve(themeSheetPath(theme));
         if (themeSheet != null) {
             sheets.add(themeSheet);
         }

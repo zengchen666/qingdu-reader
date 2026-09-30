@@ -1,0 +1,69 @@
+/* 墨黑主题：接近纯黑。
+
+   和「夜间」的关系：夜间是深灰底（#1e1f22），墨黑压到 #0d0d0f。
+   两个都留着，是因为它们解决的是不同问题：
+   · 夜间追求"关灯后不刺眼"，所以故意不用纯黑 —— 纯黑配浅字对比过硬，
+     反而更容易累；深灰把对比度让出来一点。
+   · 墨黑追求"对比度与省电"。OLED 屏上黑像素不发光，底色越黑越省电；
+     白天在亮环境里看，深灰也常常显得发灰、不够利落。
+
+   所以这不是"夜间更黑一点"，而是一个取舍不同的独立主题。
+   正文色也相应压低了亮度（#bdbdb8 而不是夜间的 #c9c9c4），
+   免得在近黑底上出现"光晕"。
+
+   和 theme-dark.css 一样，必须额外覆盖一批 JavaFX 内置的"查表颜色" ——
+   菜单栏、弹出菜单、选项卡、滚动条、对话框全是 Modena 按浅色画的，
+   我们的 CSS 覆盖不到它们内部几十条规则，只能改它们共同的源头变量。 */
+.root {
+    /* ---- JavaFX 内置控件的根变量（让菜单、滚动条、对话框一起变黑）---- */
+    -fx-base: #1a1a1e;
+    -fx-background: #0d0d0f;
+    -fx-control-inner-background: #16161a;
+    -fx-control-inner-background-alt: #1a1a1f;
+    -fx-text-background-color: #c8c8c3;
+    -fx-mid-text-color: #9a9aa0;
+    -fx-light-text-color: #e4e4df;
+    -fx-dark-text-color: #0d0d0f;
+    -fx-accent: #2f4a66;
+    -fx-focus-color: #5b93c9;
+    -fx-faint-focus-color: #5b93c922;
+    -fx-selection-bar: #24384f;
+    -fx-selection-bar-non-focused: #26262c;
+
+    /* ---- 本项目的自定义配色 ---- */
+    /* 面板和纸面必须拉开：只有 3 个色阶的差（#0d0d0f → #16161a），
+       再多就失去"墨"的感觉了，所以用边框（#2a2a30）来补边界感。 */
+    -qd-window-bg:      #0d0d0f;
+    -qd-panel-bg:       #16161a;
+    -qd-panel-subtle:   #1f1f24;
+    -qd-border:         #2a2a30;
+
+    -qd-content-bg:     #0d0d0f;
+    -qd-text:           #bdbdb8;
+    -qd-text-heading:   #e2e2dd;
+    -qd-text-muted:     #86868c;
+    -qd-text-faint:     #63636a;
+
+    /* 强调色要比夜间的 #6ea8dc 更亮一点才压得住纯黑底。
+       它是块状使用的（按钮、进度条），亮一些不会刺眼。 */
+    -qd-accent:         #7fb2e5;
+    -qd-selection-bg:   #24384f;
+    -qd-selection-text: #e8f1fa;
+    -qd-hover-bg:       #1c1c21;
+
+    /* 这块底色是近黑的，强调色又是亮的 —— 文字必须反过来用深色，
+       否则白字压在亮蓝上会糊成一片。 */
+    -qd-on-accent:      #0a1420;
+
+    /* 深底上的提示色要提亮。直接用日间那个 #b4534b 压在这里会看不出颜色。 */
+    -qd-warn:           #e58c84;
+
+    /* 高亮词用提亮过的琥珀色。日间那支 #a35a00 在近黑底上几乎看不见。 */
+    -qd-highlight:      #e8b060;
+
+    /* 滑块要比面板亮一点才看得见，但别亮到像一条线。
+       注意我们覆盖了 -fx-base，滚动条默认色本会跟着变，
+       但 base.css 里显式指定了 -qd-scroll-thumb，会盖过它。 */
+    -qd-scroll-thumb:       #2e2e34;
+    -qd-scroll-thumb-hover: #3d3d44;
+}
