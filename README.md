@@ -114,6 +114,11 @@ $env:QINGDU_LLM_API_KEY = "sk-你的key"; $env:QINGDU_LLM_MODEL = "deepseek-chat
 .\.venv\Scripts\python.exe -m qingdu_ai
 ```
 
+> ⚠️ **第 2 行和第 4 行必须用 `.venv` 里的解释器，不能写成裸 `python`。**
+> 依赖装在虚拟环境里，而 `python` 指向系统解释器 —— 照抄成 `python -m qingdu_ai`
+> 会得到 `ModuleNotFoundError: No module named 'fastapi'`，
+> 报错看着像代码坏了，实际只是命令敲错。见 [`qingdu-ai/README.md`](qingdu-ai/README.md) 的「常见报错」。
+
 轻读会自动探测 `127.0.0.1:8000`。**探测不到就禁用 AI 入口并给出明确提示**，
 不会让界面因为服务没起而卡住。
 

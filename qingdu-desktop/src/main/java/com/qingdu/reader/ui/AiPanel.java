@@ -247,8 +247,10 @@ public final class AiPanel extends VBox {
             recheckButton.setVisible(true);
             recheckButton.setManaged(true);
             statusLabel.getStyleClass().add("reader-ai-status-warn");
-            statusLabel.setText("AI 服务未启动。\n请在 qingdu-ai 目录执行：\n"
-                    + AiServiceClient.START_COMMAND);
+            statusLabel.setText("AI 服务未启动。\n"
+                    + "请在 qingdu-ai 目录执行：\n"
+                    + AiServiceClient.START_COMMAND
+                    + "\n（报 No module named 'fastapi' 说明依赖没装，见 qingdu-ai\\README.md）");
             host.setStatus("AI 服务未启动");
             return;
         }
@@ -418,8 +420,11 @@ public final class AiPanel extends VBox {
         }
         switch (failure) {
             case SERVICE_DOWN -> {
-                setWarn("AI 服务未启动或已断开。\n请确认它还在运行（"
-                        + AiServiceClient.START_COMMAND + "）。");
+                setWarn("AI 服务未启动或已断开。\n"
+                        + "请确认它还在运行：\n"
+                        + "cd qingdu-ai\n"
+                        + AiServiceClient.START_COMMAND + "\n"
+                        + "（首次使用需先装依赖，见 qingdu-ai\\README.md）");
                 serviceReady = false;
                 setInputEnabled(false);
                 recheckButton.setVisible(true);

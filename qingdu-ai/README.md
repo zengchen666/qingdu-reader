@@ -42,6 +42,54 @@ $env:QINGDU_LLM_MODEL    = "deepseek-chat"
 
 看到 `http://127.0.0.1:8000` 就成了。轻读会自动探测这个端口。
 
+---
+
+## 🔴 常见报错：`No module named 'fastapi'`
+
+**这是最常卡住的一个，而且报错信息看着像"代码坏了"、实际是命令敲错了。**
+
+```
+Traceback (most recent call last):
+  ...
+  File ".../qingdu_ai/server.py", line 30, in <module>
+    from fastapi import HTTPException
+ModuleNotFoundError: No module named 'fastapi'
+```
+
+**根因：用了 `python`，而不是 venv 里的解释器。**
+
+依赖（fastapi / uvicorn / httpx / pydantic）装在 `qingdu-ai\.venv\` 里，
+而 `python` 指向的是**系统解释器** —— 那里没有这些包。
+本机实测：系统 Python 跑 `python -m qingdu_ai` 就是上面这个报错；
+换成 `.\.venv\Scripts\python.exe -m qingdu_ai` **一次就起来**。
+
+| 命令 | 结果 |
+|---|---|
+| `python -m qingdu_ai` | ❌ `ModuleNotFoundError: No module named 'fastapi'` |
+| `.\.venv\Scripts\python.exe -m qingdu_ai` | ✅ 服务正常启动 |
+
+**所以第 3 步的命令必须写全路径。** 轻读的 AI 面板里显示的启动命令也是这一条
+（带全路径），照着敲就不会错。
+
+如果连 `.venv` 都还没建，先把上面「快速开始」的 1、2 两步跑一遍。
+判断装没装过，一行就够：
+
+```powershell
+.\.venv\Scripts\python.exe -c "import fastapi; print(fastapi.__version__)"
+```
+
+打印出版本号 = 依赖齐全；报同样的错 = 还没装或装到了别的解释器上。
+
+### 其余几个常见问题
+
+| 现象 | 原因 | 怎么办 |
+|---|---|---|
+| 轻读里 AI 入口一直置灰 | 服务没起，或起了但没配 key | 看 AI 面板提示：它会区分"服务未启动"和"未配置 key" |
+| `Address already in use` | 8000 端口被别的程序占了 | 换端口：`$env:QINGDU_PORT = 8001`（轻读侧探测地址也要跟着改） |
+| 轻读提示"AI 服务返回了无法解析的内容" | 轻读与服务端版本不匹配 | 两边都升到同一个 tag |
+
+---
+
 ### 配置项
 
 | 环境变量 | 必填 | 说明 |
@@ -57,9 +105,20 @@ $env:QINGDU_LLM_MODEL    = "deepseek-chat"
 
 ### 没配 key 会怎样
 
-**服务照常启动**，`/api/health` 返回 `llm: "no-api-key"`，问答返回 503。
-这是刻意的：如果缺 key 就退出进程，轻读只会探测到"连接被拒绝"，
+**服务照常启动**，`/api/health` 的 `llm` 回报未配置状态，问答返回 503
+（实测文案：`未配置模型 API（需要 QINGDU_LLM_BASE_URL / QINGDU_LLM_API_KEY / QINGDU_LLM_MODEL）`）。
+
+三态的区分是刻意的：
+
+| 情况 | `llm` |
+|---|---|
+| 三项都填了 | `ready` |
+| 填了 base_url 和 model，只差 key | `no-api-key` |
+| base_url / model 有一项没填 | `not-configured` |
+
+**为什么缺 key 不直接退出进程**：如果缺 key 就退出，轻读探测 8000 端口会得到"连接被拒绝"，
 没法区分"你忘了开服务"和"你忘了填 key" —— 两个完全不同的原因给同一句提示。
+同理，接口出错时**不要弹栈**，返回可读的中文文案。
 
 ---
 

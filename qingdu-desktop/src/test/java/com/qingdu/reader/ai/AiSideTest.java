@@ -355,4 +355,39 @@ class AiSideTest {
             assertEquals("第9章", out.get(1).chapterTitle());
         }
     }
+
+    // ==================== 启动提示 ====================
+
+    @Nested
+    @DisplayName("服务启动提示")
+    class StartCommandTest {
+
+        @Test
+        void 启动命令必须用_venv_里的解释器而不是裸_python() {
+            // 🔴 这条测试是为了钉住一个真实踩过的坑（2026-10-03）。
+            // 依赖装在 qingdu-ai\.venv 里，而裸 `python` 指向系统解释器，
+            // 于是照着提示敲会得到：
+            //     ModuleNotFoundError: No module named 'fastapi'
+            // 报错看着像"代码坏了"，实际是提示本身写错了。
+            // 写成全路径之后，本机实测一次就起来。
+            String cmd = AiServiceClient.START_COMMAND;
+            assertTrue(cmd.contains(".venv"),
+                    "启动命令必须指向 .venv 里的解释器，实际是：" + cmd);
+            assertTrue(cmd.contains("python.exe"),
+                    "启动命令必须用 venv 的 python.exe，实际是：" + cmd);
+            assertFalse(cmd.trim().startsWith("python"),
+                    "不能用裸 python（那是系统解释器），实际是：" + cmd);
+            assertTrue(cmd.contains("-m qingdu_ai"),
+                    "启动命令必须走 python -m qingdu_ai 入口，实际是：" + cmd);
+        }
+
+        @Test
+        void 装依赖的提示包含建_venv_与_install_两步() {
+            // 只给启动命令不够：venv 还没建的人照着敲仍然失败，
+            // 所以要能一键看到"先装依赖"的那两条命令。
+            String hint = AiServiceClient.INSTALL_HINT;
+            assertTrue(hint.contains("python -m venv .venv"), "缺建 venv 这一步：" + hint);
+            assertTrue(hint.contains("pip install -e"), "缺装依赖这一步：" + hint);
+        }
+    }
 }

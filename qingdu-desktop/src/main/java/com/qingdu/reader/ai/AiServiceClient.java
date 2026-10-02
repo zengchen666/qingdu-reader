@@ -49,9 +49,35 @@ public final class AiServiceClient {
     private static final Duration ASK_TIMEOUT = Duration.ofSeconds(120);
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(3);
 
-    /** 启动命令提示 —— 服务没起时直接显示它，省得用户去翻文档。 */
+    /**
+     * 启动命令提示 —— 服务没起时直接显示它，省得用户去翻文档。
+     *
+     * <h2>🔴 为什么默认用 {@code .\.venv\Scripts\python.exe} 而不是 {@code python}</h2>
+     * 依赖（fastapi / uvicorn / httpx / pydantic）是装进 {@code qingdu-ai\.venv}
+     * 这个虚拟环境里的，而 {@code python} 指向的是**系统解释器**。
+     * 本机实测：系统 Python 跑 {@code python -m qingdu_ai} 直接
+     * {@code ModuleNotFoundError: No module named 'fastapi'}，
+     * 而 {@code .\.venv\Scripts\python.exe -m qingdu_ai} 一次就起来。
+     *
+     * <p>这不是用户配错了环境，是<b>默认给的那条命令本身就是错的</b> ——
+     * 在任何"按文档装了依赖"的机器上，裸 {@code python} 都不会指向 venv。
+     * 所以这里必须写全路径；写成 {@code python -m qingdu_ai} 会让绝大多数人卡在
+     * 一个看起来像"代码坏了"的报错上。
+     */
     public static final String START_COMMAND =
-            "python -m qingdu_ai";
+            ".\\.venv\\Scripts\\python.exe -m qingdu_ai";
+
+    /**
+     * 依赖没装时的补充提示。
+     *
+     * <p>区分两种失败：{@code ModuleNotFoundError: fastapi}（依赖没装）
+     * 和"服务根本没起"（连得上但不是 AI 服务）。前者照着 {@link #START_COMMAND}
+     * 敲仍然会失败，必须先装依赖。
+     */
+    public static final String INSTALL_HINT =
+            "cd qingdu-ai\n"
+            + "python -m venv .venv\n"
+            + ".\\.venv\\Scripts\\python.exe -m pip install -e \".[dev]\"";
 
     private final String baseUrl;
     private final HttpClient http;
