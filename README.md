@@ -8,6 +8,7 @@
 ![jdk](https://img.shields.io/badge/JDK-25-blue)
 ![javafx](https://img.shields.io/badge/JavaFX-25.0.4-blue)
 ![license](https://img.shields.io/badge/License-Apache%202.0-green)
+![python](https://img.shields.io/badge/AI%20服务-Python%20%2B%20FastAPI-blue)
 
 </div>
 
@@ -19,7 +20,9 @@
 
 它完全离线运行，不需要注册账号，不联网也能用，没有广告。所有数据都存在你自己的电脑上。
 
-> **想直接用？** 去 [Releases](https://github.com/zengchen666/qingdu-reader/releases) 下载免安装绿色版（约 43 MB），解压后双击 `QingduReader.exe` 就行，**不需要安装 JDK**。
+> **想直接用？** 去 [Releases](https://github.com/zengchen666/qingdu-reader/releases) 下载免安装绿色版（约 45 MB），解压后双击 `QingduReader.exe` 就行，**不需要安装 JDK**。
+>
+> v0.4 起可选挂一个本地 AI 服务（Python），用来做**基于原文的问答**。不装也完全不影响阅读功能 —— 阅读器本体是纯 Java、零外部依赖的。
 
 ---
 
@@ -29,7 +32,7 @@
 
 左侧是目录 / 书签，中间是正文的"版心"（**一行约 34 个汉字**，两侧留白），正文下方那条细线是**全书进度条**，状态栏右侧常显全书百分比。目录栏可以收起（`F9`），收起后正文在整块区域里居中。六套主题（日间 / 护眼 / 雾蓝 / 羊皮纸 / 夜间 / 墨黑）共用同一套结构样式，只替换配色。
 
-还没打开任何书时，中央显示的是书架：一排排封面卡片，顶部按分组筛选，卡片上能看到分组名和"这本书读了多久"。`Ctrl+F` 可以搜当前书，也可以切到「全库」一次搜遍所有已建索引的书。
+还没打开任何书时，中央显示的是书架：一排排封面卡片，顶部按分组筛选，卡片上能看到分组名和"这本书读了多久"。`Ctrl+F` 可以搜当前书，也可以切到「全库」一次搜遍所有已建索引的书。`Ctrl+G` 打开「AI 问答」——基于你书里的原文回答，每条结论都带可点击核对的引用出处。
 
 应用图标同样只有两个颜色：底色取的是主题里的 `-qd-accent`，书页取纸面色 —— 和界面是同一套色。各尺寸与浅色 / 深色背景下的实际效果见 [`docs/icon-preview.png`](docs/icon-preview.png)。
 
@@ -80,6 +83,40 @@
 | 全文搜索 | 基于 SQLite FTS5 的书内全文检索（中文二字滑窗分词，零第三方依赖） | **已完成（v0.2.0）** |
 | 跨书搜索 | 一次搜遍书架上所有已建索引的书，结果按书分组（拼音序），点击跳到对应书该章；未建索引的书会明确提示，可一键批量建索引 | **已完成（v0.3）** |
 
+### AI 问答（v0.4 新增）
+
+一个**可选**的 companion 服务。轻读本体依然是纯 Java、离线、零依赖；只有你主动用 AI 提问时，
+才需要另外起一个 Python 进程。
+
+| 特性 | 说明 | 状态 |
+|---|---|---|
+| 基于原文的问答 | 问"林动这一章讲了什么"，基于你书架上的原文回答，不允许模型自由发挥 | **已完成（v0.4）** |
+| 可核对引用 | 每条结论带 `[n]`，点一下跳到**第几本书·第几章·第几段**并在正文里高亮该段 | **已完成（v0.4）** |
+| 覆盖度如实上报 | 报「书库总数 / 已建索引 / 真正查过」三个数，缺索引的书会明确提示 | **已完成（v0.4）** |
+| 检索词自动提取 | 从问句里剥疑问词，只用实词去 FTS5 召回（token 从 6~8 降到 1~5） | **已完成（v0.4）** |
+| 服务探测与错误分类 | 区分「服务没起」「没配 key」「召不回原文」「引用无效」四种完全不同的原因 | **已完成（v0.4）** |
+| 多模型可换 | 任何 OpenAI 兼容接口都行：DeepSeek / 通义 / 本地 Ollama | **已完成（v0.4）** |
+| 流式打字机输出 | 逐字出答案 | 计划中（v0.5） |
+| 多轮追问 | 记住上下文继续问 | 计划中（v0.5） |
+| 向量检索 + rerank | 解决"他怎么变强的"这类不含专有名词的问题召不回 | 计划中（v0.5） |
+| 章节摘要 / 人物关系 | 基于原文自动生成 | 远期 |
+
+**它不做**：AI 续写、AI 改写正文、任何**改写原文**的功能。这是阅读器，不是写作工具。
+AI 只做**只读的理解与问答**，服务本身也不碰你的书库数据库。
+
+启动方式见 [`qingdu-ai/README.md`](qingdu-ai/README.md)。一句话：
+
+```powershell
+cd qingdu-reader\qingdu-ai
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+$env:QINGDU_LLM_API_KEY = "sk-你的key"; $env:QINGDU_LLM_MODEL = "deepseek-chat"
+.\.venv\Scripts\python.exe -m qingdu_ai
+```
+
+轻读会自动探测 `127.0.0.1:8000`。**探测不到就禁用 AI 入口并给出明确提示**，
+不会让界面因为服务没起而卡住。
+
 ### 格式与扩展
 
 | 特性 | 说明 | 状态 |
@@ -113,6 +150,9 @@
 | EPUB 解析 | epub4j | 计划中 |
 | HTML 提纯 | jsoup（白名单过滤） | 计划中 |
 | 全文检索 | SQLite FTS5（`detail='none'` + 自写二字滑窗分词 + 原文后过滤） | 已落地 |
+| AI 侧 HTTP 客户端 | JDK 自带 `java.net.http.HttpClient` + 手写 JSON，**零新依赖** | 已落地 |
+| AI 服务端 | Python 3.11+ / FastAPI / Pydantic / httpx | 已落地（`qingdu-ai/`） |
+| 大模型 | 任何 OpenAI 兼容接口（DeepSeek / 通义 / 本地 Ollama） | 已落地 |
 | 日志 | SLF4J + Logback（当前用 `System.err` 输出） | 计划中 |
 
 > **为什么持久层不引 MyBatis-Plus？** 这个项目一共三张表、不到二十条 SQL，
@@ -156,8 +196,10 @@ qingdu-reader/
 │   │                            全文搜索的设计与验收报告
 │   ├── 2026-09-22-v0.2.1-ui-polish.md
 │   │                            界面打磨（翻章 / 目录栏收起 / 六套主题 / 弹窗层）的设计与人工验收清单
-│   └── 2026-10-02-v0.3-design.md / -regression.md
-│                                书库整理 + 全库检索的设计取舍与回归基线
+│   ├── 2026-10-02-v0.3-design.md / -regression.md
+│   │                            书库整理 + 全库检索的设计取舍与回归基线
+│   └── 2026-10-03-v0.4-ai-design.md
+│                                AI 问答（双进程 RAG）的架构、检索词实测与三层验收
 │
 ├── scripts/                 构建与打包
 │   ├── package.ps1              jlink + jpackage 一键生成免安装绿色版
@@ -169,7 +211,21 @@ qingdu-reader/
 │   ├── SearchProbe.java         单书全文检索验收：候选 vs 精确（零假阳性）
 │   ├── LibrarySearchProbe.java  跨书检索验收：耗时 / 峰值内存 / 覆盖度 / 分组顺序
 │   ├── SearchTimingProbe.java   单书查询耗时拆解：SQL 候选 vs 后过滤
-│   └── SearchScalingProbe.java  规模缩放实验：SQL 耗时是否随索引库增长
+│   ├── SearchScalingProbe.java  规模缩放实验：SQL 耗时是否随索引库增长
+│   ├── AiE2eProbe.java          AI 跨进程契约验收：假服务 + 逐项验 Java↔Python 的 JSON 契约
+│   └── kw_probe.py              检索词策略在四本真书上的对比实测
+│
+├── qingdu-ai/               AI 问答服务（Python，可选组件，不装不影响阅读）
+│   ├── pyproject.toml
+│   ├── README.md                启动方式、端点、错误分类、防幻觉设计
+│   ├── qingdu_ai/
+│   │   ├── server.py            FastAPI 端点：/api/health、/api/ask
+│   │   ├── schemas.py           Pydantic 模型（camelCase 别名，对齐 Java 侧）
+│   │   ├── retrieval.py         片段去重 / 章节打散 / 截断到 topK
+│   │   ├── prompts.py           提示词（含"原文没提就说不知道"这条硬约束）
+│   │   ├── llm.py               模型调用 + 引用编号校验
+│   │   └── config.py            环境变量配置
+│   └── tests/                   42 条 pytest
 │
 ├── qingdu-common/           公共层：被所有模块依赖
 │   ├── domain/              领域模型：Book、Chapter、ChapterBlock、BookFormat
@@ -193,6 +249,7 @@ qingdu-reader/
 │   ├── BookStore            图书元信息 + 阅读进度（UPSERT 写同一行）
 │   ├── BookmarkStore        书签（新增 / 列表 / 就近查找 / 删除）
 │   ├── SettingStore         键值设置（阅读设置就存在这张表里）
+│   ├── SearchStore          FTS5 全文索引（二字滑窗分词 + 指纹失效 + 懒建索引）
 │   ├── QingduStore          外观模式：把上面几个收成一个入口
 │   └── model/               ReadingProgress、Bookmark、RecentBook
 │
@@ -201,9 +258,18 @@ qingdu-reader/
 │   ├── QingduApplication    窗口与生命周期
 │   ├── resources/css/       样式表：base.css（结构）+ theme-*.css（六套配色）
 │   ├── resources/icon/      窗口图标 PNG（16 / 24 / 32 / 48 / 64 / 128 / 256 / 512 八档）
+│   ├── ai/                  与 qingdu-ai 通信的纯逻辑（不碰界面，可 headless 单测）
+│   │   ├── AiModels         请求/响应模型（Java record）
+│   │   ├── AiServiceClient  HTTP 客户端：服务探测、问答、错误分类
+│   │   ├── AskKeyword       问句 → 检索词（剥疑问词与标点）
+│   │   ├── ChunkSplitter    章节 → 片段（按 ChapterBlock.Paragraph 切，带章节标题）
+│   │   └── Json             手写 JSON 序列化/反序列化（零依赖）
 │   └── ui/
 │       ├── ReaderView       菜单栏 / 章节目录 / 书签 / 正文区 / 状态栏
-│       ├── ChapterRenderer  内容块 → JavaFX 节点
+│       ├── AiPanel          AI 问答面板：输入、答案、引用列表（点击跳章 + 高亮）
+│       ├── SearchPanel      全文搜索面板（书内 / 全库）
+│       ├── BookshelfView    书架：封面卡片、分组筛选、导入
+│       ├── ChapterRenderer  内容块 → JavaFX 节点（含搜索命中高亮）
 │       ├── ChapterNavBar    章末的「上一章 / 下一章」翻章条
 │       ├── SettingsWindow   阅读设置：独立非模态窗口（记位置、跟着换肤）
 │       ├── SettingsPane     设置面板本体（含实时预览，改动即生效）
@@ -573,6 +639,98 @@ SQLite 没有"改列"和"删列"，加字段只能 `ALTER TABLE ADD COLUMN`，
 那样新库的最终结构就成了没人能证明的隐式知识。新库 `user_version` 是 0，
 一样从 `migrateV1ToV2` 走过来 —— 代价是新库多做几毫秒的 `ALTER`，换来**只有一条路径需要测试**。
 
+### 16. AI 问答：检索这一环已经在两年前就验证过了
+
+v0.4 加了基于原文的问答。**技术选择上的核心判断是：不重新发明检索。**
+RAG 里最容易做糙、也最能拉开差距的就是召回，而这一层轻读已经有了：
+
+```
+用户问句
+   ↓  AskKeyword        剥疑问词，只留实词
+   ↓  SearchStore       FTS5 二字滑窗召回（已验证零假阳性）+ 原文后过滤
+   ↓  ChapterNavBar…    按章节字节偏移 seek，只读命中章 → 按段落切片段
+轻读 ──HTTP/JSON（带原文片段）──> qingdu-ai
+                                    · 片段去重 / 章节打散 / 截断到 topK
+                                    · 组织提示词（含防幻觉约束）
+                                    · 调大模型
+                                    · 校验模型返回的引用编号
+   ↑ 答案 + 可点击引用
+```
+
+**为什么拆成两个进程，而不是让 Java 直接调模型？**
+Java 调 OpenAI 接口能写在简历上的只有"我会调 API"，聊不出东西。
+AI 应用岗真正被问的是切分策略、召回怎么做、rerank 怎么排、幻觉怎么抑制、引用怎么保证 ——
+这些在 Python 生态里有成熟范式，也更容易做深。
+
+**为什么原文一律由轻读喂过去，不让 Python 自己读文件？**
+原文在用户本机的 TXT 里，定位靠 `TxtBookParser` 算出的**章节字节偏移**。
+让 Python 自己去读，就等于把已验证的解析引擎复制一份 —— 两套分章逻辑迟早会给出不同的章节号，
+而引用编号是直接建立在章节号上的。
+
+#### 防幻觉：两道闸，缺一道就等于没做
+
+**第一道是提示词**，写死三条：只能依据原文、每个结论必须带 `[n]`、**原文没提就说不知道**。
+第三条最容易被忽略：不给模型"我不知道"这个出口，它会觉得"不回答"是任务失败，从而硬凑一个带引用的答案。
+
+**第二道是服务端校验**，不信任模型给的编号：
+
+| 模型行为 | 处理 |
+|---|---|
+| 编号全部不在片段集合内（含 `[100]` 这类越界） | `answer = null`，判为无法回答 |
+| 编号部分有效 | 保留有效部分，**删掉无引用的句子** |
+| 引用了有效编号但内容其实来自别的片段 | ⚠️ **机器拦不住**，只能靠用户核对原文 |
+
+第二行是刻意加严的：一段模型用自身知识补出来的文字混在有出处的答案里，
+**危害比整段拒答更大** —— 用户会以为整段都有出处。
+而第三行是这个方案的**真实边界**：引用校验只能拦形式错误，拦不住内容错位。
+引用的价值是**让错误可被发现**，不是保证不出错。
+
+#### 检索词：剥掉疑问词是实测出来的，不是拍脑袋
+
+`FTS5` 的 `MATCH` 是 **AND 语义** —— 所有 token 都得出现，缺一个整条召不回。
+而问句里的疑问词会凭空造出原文没有的二字组合。四本真书上的对比实测：
+
+| 问句 | 剥之前 | 剥之后 |
+|---|---|---|
+| `药老是什么来历` | 药老 什么 是 什么 来历 → 6 token | 药老 来历 → 2 token |
+| `叶修是怎么退役的` | 叶修 是 怎么 退役 的 → 5 token | 叶修是退役的 → 3 token |
+
+10 个真实问句里，**有 1 例完全靠剥词才救回来**（`哪本` / `本书` 在《斗破苍穹》里根本不存在），
+也有 1 例剥词后反而更差（`炎拜` 是原文没有的词），但整句本来也召不回 —— **平手**。
+所以结论是：**去疑问词不是必需，但无害，且能把 token 数砍掉一半以上**。
+
+⚠️ 但**刻意不删「谁」和「什么」单独项**：
+「谁知道这件事」删掉「谁」会变成「知道这件事」，改变了问题本身；
+「什么」删掉后会多造出 `的功` 这种通用组合。
+只删「是谁」这种**带明确语义边界**的组合词。
+
+#### 三个测量上的坑
+
+1. **全角空格 U+3000 不在 Java 的 `\s` 里。** 中文输入法打出来的是全角空格，
+   而 `\s` 和 `String.strip()` 都**不处理它**。症状是 `药老　是什么来历`
+   清理后变成 `药老来历`——两个词粘成一个，token 反而多出一个不存在的组合。
+   必须显式写 `[\s\u3000]+`。
+2. **camelCase 契约会被静默丢弃。** Pydantic 默认忽略未声明的多余字段，
+   所以 Java 侧发 snake_case 的 `book_id` 会被**静静丢掉**、请求仍然 200，
+   只是引用的书名全空了。Python 侧用 `alias_generator=to_camel` 对齐，
+   并有专门的契约测试钉住。
+   ⚠️ 关键在于**单测发现不了这类故障** —— `AiServiceClient.interpret(status, body)`
+   直接传字符串，**完全绕过了 socket**。所以必须有第三层：
+   `scripts/AiE2eProbe.java` 起一个真的 `HttpServer`（端口由系统分配，不抢 8000），
+   用真的 socket 走一遍收发，逐项验契约。
+3. **引用编号必须可复现。** `ChunkSplitter.collect` 收 `SortedMap` 而不是 `HashMap` ——
+   因为 `Map.of` 是**无序的**，用它会让两次运行得到不同的编号，用户点引用会跳到不同段落。
+
+#### 覆盖度必须报三个数字
+
+「书库总数 / 已建索引 / 真正查过」，和 v0.3 跨书搜索是同一条原则：
+用户问「云岚宗」得到 245 个片段，其中 3 本没建索引，界面不提示的话
+他会以为"书里就没有"，而实际上那 3 本等于没搜。
+同理，召不回片段时该说的是"换个说法试试"，**不是"没有找到"**。
+
+完整设计与实测数据见 [`docs/2026-10-03-v0.4-ai-design.md`](docs/2026-10-03-v0.4-ai-design.md)，
+服务侧细节见 [`qingdu-ai/README.md`](qingdu-ai/README.md)。
+
 ## 开发环境
 
 | 组件 | 版本要求 | 说明 |
@@ -581,6 +739,7 @@ SQLite 没有"改列"和"删列"，加字段只能 `ALTER TABLE ADD COLUMN`，
 | Maven | 3.9+ | 构建与依赖管理 |
 | Git | 2.40+ | 版本控制 |
 | 操作系统 | Windows 10 / 11 | 当前仅支持 Windows |
+| Python | 3.11+ | **仅 AI 问答功能需要**，不装也能正常阅读 |
 
 > JavaFX 从 JDK 11 起已从 JDK 中剥离，需要单独引入依赖。项目中已通过 Maven 配置好，无需手动安装 JavaFX SDK。
 
@@ -603,6 +762,38 @@ mvn install -DskipTests
 # 启动桌面端
 mvn -pl qingdu-desktop javafx:run
 ```
+
+### 跑测试
+
+```bash
+# Java 全部单元测试（451 条）
+mvn test
+
+# AI 侧（42 条，仅 v0.4 起需要 Python 环境）
+cd qingdu-ai && .\.venv\Scripts\python.exe -m pytest
+
+# AI 跨进程契约验收（23 项，用 JDK HttpServer 起一个假服务，端口由系统分配）
+# 这层不能省：单测直接给 interpret() 传字符串，完全绕过了 socket，
+# 抓不到「Java 序列化的 JSON 和 Python Pydantic 模型对不上」这类故障
+```
+
+### 启动 AI 问答服务（可选）
+
+```powershell
+cd qingdu-ai
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+
+# 配模型（任何 OpenAI 兼容接口都行）
+$env:QINGDU_LLM_BASE_URL = "https://api.deepseek.com/v1"
+$env:QINGDU_LLM_API_KEY  = "sk-你的key"
+$env:QINGDU_LLM_MODEL    = "deepseek-chat"
+
+.\.venv\Scripts\python.exe -m qingdu_ai
+```
+
+轻读会自动探测 `127.0.0.1:8000`，探测不到就禁用 AI 入口并给出明确提示。
+**服务本身不读你的书库、不改一个字原文**，只接收轻读喂过来的片段。
 
 #### 为什么启动前要先 `install`
 
@@ -811,9 +1002,11 @@ java --module-path qingdu-desktop\target\package-stage\fx ^
 | 1.5 | 界面打磨：**章末翻章 + 目录栏可收起 + 主题扩到六套 + 设置改非模态窗口已完成（v0.2.1）** | **已完成** |
 | 2 | 书库管理：**书架 + 批量导入 + 封面占位（v0.1.1）+ 分组筛选 + 书签备注 + 阅读时长（v0.3）**；收藏夹监控待做 | **已完成** |
 | 2.1 | 全文搜索：**SQLite FTS5 + 中文二字滑窗分词（v0.2.0）+ 跨书全库检索（v0.3）** | **已完成** |
+| 2.2 | AI 问答：**双进程 RAG —— 问句提取检索词 + FTS5 召回 + 段落切片段 + 大模型作答 + 引用可核对（v0.4）** | **已完成** |
 | 3 | 沉浸体验：全屏阅读、自动滚动、行距 / 双栏 | 计划中 |
 | 4 | EPUB 支持：epub4j 解析、统一章节模型落地、图片处理 | 计划中 |
-| 5 | 打包发布：jlink + jpackage、GitHub Release | **已完成（绿色版 + [v0.1.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.1.0) / [v0.1.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.1.1) / [v0.2.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.2.0) / [v0.2.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.2.1) Release；`.msi` 安装包待做）** |
+| 5 | 打包发布：jlink + jpackage、GitHub Release | **已完成（绿色版 + [v0.1.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.1.0) / [v0.1.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.1.1) / [v0.2.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.2.0) / [v0.2.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.2.1) / [v0.3.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.3.0) / [v0.4.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.4.0) Release；`.msi` 安装包待做）** |
+| 5.1 | AI 增强：向量检索 + rerank、流式输出、多轮追问 | 计划中（v0.5） |
 | 6 | 云端同步：Spring Boot 服务、账号、进度同步 | 远期 |
 | 7 | 扩展：听书、更多格式 | 远期 |
 
