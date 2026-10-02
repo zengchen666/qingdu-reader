@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qingdu-ai"
+version = "0.4.0"
+description = "轻读阅读器的 AI 问答服务：接收轻读传来的原文片段，召回重排后调用大模型并校验引用"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "httpx>=0.26",
+    "pydantic>=2.6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+qingdu-ai = "qingdu_ai.__main__:main"
+
+[tool.setuptools]
+packages = ["qingdu_ai"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# -q 让输出短一点；--tb=short 让断言失败时只给关键几行
+addopts = "-q --tb=short"

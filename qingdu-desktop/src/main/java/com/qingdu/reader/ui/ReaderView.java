@@ -3,6 +3,7 @@ package com.qingdu.reader.ui;
 import com.qingdu.common.domain.Book;
 import com.qingdu.common.domain.BookFormat;
 import com.qingdu.common.domain.Chapter;
+import com.qingdu.common.domain.ChapterBlock;
 import com.qingdu.common.settings.ReaderSettings;
 import com.qingdu.common.settings.Theme;
 import com.qingdu.core.parser.BookParseException;
@@ -11,10 +12,13 @@ import com.qingdu.core.parser.txt.TxtChapterSplitter;
 import com.qingdu.core.text.CharsetDetector;
 import com.qingdu.reader.library.BookImporter;
 import com.qingdu.store.QingduStore;
+import com.qingdu.store.SearchStore;
 import com.qingdu.store.StoreException;
 import com.qingdu.store.model.Bookmark;
 import com.qingdu.store.model.ReadingProgress;
 import com.qingdu.store.model.RecentBook;
+import com.qingdu.store.model.SearchHit;
+import com.qingdu.store.model.SearchResult;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.concurrent.Task;
@@ -280,6 +284,27 @@ public class ReaderView extends BorderPane {
      */
     private final SearchPanel searchPanel;
 
+    /**
+     * 左侧第四个标签页：基于原文的 AI 问答（v0.4）。
+     *
+     * <p><b>🔴 它与 {@link #searchPanel} 的存在性互不依赖</b>：
+     * Python 服务没起时面板自己置灰并显示启动命令，阅读、搜索、书签
+     * 一行代码都不受影响（设计文档 7.3 的硬约束）。
+     * 换书时<b>刻意不清空</b> —— 与 {@code SearchPanel} 不同，
+     * 用户上一个问题可能正是关于新打开的这本书的（"上一本那件事后来呢"）。
+     */
+    private final AiPanel aiPanel;
+
+    /**
+     * AI 问答检索时最多校验多少个命中章。
+     *
+     * <p><b>为什么是 40</b>：FTS 的候选章<b>按章节序号排</b>（不是按相关度），
+     * 所以取前 40 个等于"全书前 40 个提到这个词的章"。AI 面板只取其中 4 章
+     * 切片段（{@code AiPanel.MAX_HIT_CHAPTERS}），40 足够覆盖到真正相关的章，
+     * 又不至于让 FTS 候选全表后过滤（那要逐章读盘）。
+     */
+    private static final int AI_SEARCH_LIMIT = 40;
+
     // ==================== 阅读状态 ====================
 
     private Path currentFile;
@@ -350,6 +375,10 @@ public class ReaderView extends BorderPane {
         // 传的是 store 而不是 store.search()：全库检索还要用 books() 和建索引任务，
         // 只给一个 SearchStore 的话面板就得自己再去摸 QingduStore，那是依赖倒挂。
         searchPanel = new SearchPanel(store, new SearchHost());
+
+        // AI 面板同理要在 buildCenter() 之前建好：它是左侧第四个标签页的内容。
+        // 它在构造里就发起一次健康探测（非阻塞），所以这里不会拖慢启动。
+        aiPanel = new AiPanel(new AiHost());
 
         getStyleClass().add("reader-window");
         readerPane = buildCenter();
@@ -484,7 +513,16 @@ public class ReaderView extends BorderPane {
             searchPanel.focusInput();
         });
 
-        return new MenuItem[]{find};
+        MenuItem ask = new MenuItem("基于原文提问…");
+        // Ctrl+G：与 Ctrl+F 同族（都是"对当前书做点什么"），
+        // 又不撞任何已有键位。不用裸 G 是因为它会跟焦点在正文里时的输入冲突。
+        ask.setAccelerator(KeyCombination.keyCombination("Shortcut+G"));
+        ask.setOnAction(e -> {
+            sideTabs.getSelectionModel().select(3);
+            aiPanel.focusInput();
+        });
+
+        return new MenuItem[]{find, new SeparatorMenuItem(), ask};
     }
 
     private MenuItem[] buildViewMenuItems() {
@@ -663,11 +701,13 @@ public class ReaderView extends BorderPane {
         Tab chapterTab = new Tab("目录", chapterBox);
         Tab bookmarkTab = new Tab("书签", bookmarkBox);
         Tab searchTab = new Tab("搜索", searchPanel);
+        Tab aiTab = new Tab("AI 问答", aiPanel);
         chapterTab.setClosable(false);
         bookmarkTab.setClosable(false);
         searchTab.setClosable(false);
-        // 顺序即快捷键里用的下标：0 目录、1 书签、2 搜索（见 buildBookmarkMenuItems 与搜索菜单）
-        sideTabs.getTabs().setAll(chapterTab, bookmarkTab, searchTab);
+        aiTab.setClosable(false);
+        // 顺序即快捷键里用的下标：0 目录、1 书签、2 搜索、3 AI 问答
+        sideTabs.getTabs().setAll(chapterTab, bookmarkTab, searchTab, aiTab);
         sideTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         sideTabs.getStyleClass().add("reader-tabs");
 
@@ -2151,18 +2191,7 @@ public class ReaderView extends BorderPane {
 
         @Override
         public void jumpToChapter(int chapterIndex, String highlight) {
-            if (chapterIndex < 0 || chapterIndex >= chapters.size()) {
-                return;
-            }
-            if (chapterList.getSelectionModel().getSelectedIndex() == chapterIndex) {
-                // 已经在同一章：选中项没变化，监听器不会触发，
-                // 只能直接渲染一次，否则点了结果界面一动不动
-                showChapter(chapters.get(chapterIndex), 0, highlight);
-                return;
-            }
-            highlightTerm = highlight;
-            chapterList.getSelectionModel().select(chapterIndex);
-            chapterList.scrollTo(chapterIndex);
+            jumpToChapterWithHighlight(chapterIndex, highlight);
         }
 
         /**
@@ -2205,7 +2234,131 @@ public class ReaderView extends BorderPane {
         }
     }
 
-    // ==================== 小工具 ====================
+    // ==================== AI 问答面板的回调 ====================
+
+    /**
+     * 跳到指定章并高亮一个词 —— 搜索结果与 AI 引用<b>共用</b>这一条路。
+     *
+     * <p>🔴 <b>必须在 UI 线程调</b>（会动 {@code chapterList} 的选中项）。
+     * 两条调用链（面板的 Host 方法）都已经保证这一点。
+     *
+     * <p>抽出来而不是让两个 Host 各写一份：它们的行为必须完全一致 ——
+     * "已经在同一章时要直接渲染一次"这条尤其容易漏，漏了的现象是
+     * 点了引用界面一动不动，而且只在"恰好已经在那一章"时才出现。
+     */
+    private void jumpToChapterWithHighlight(int chapterIndex, String highlight) {
+        if (chapterIndex < 0 || chapterIndex >= chapters.size()) {
+            return;
+        }
+        if (chapterList.getSelectionModel().getSelectedIndex() == chapterIndex) {
+            // 已经在同一章：选中项没变化，监听器不会触发，
+            // 只能直接渲染一次，否则点了结果界面一动不动
+            showChapter(chapters.get(chapterIndex), 0, highlight);
+            return;
+        }
+        highlightTerm = highlight;
+        chapterList.getSelectionModel().select(chapterIndex);
+        chapterList.scrollTo(chapterIndex);
+    }
+
+    /**
+     * AI 问答面板要用的那几件事。
+     *
+     * <p>与 {@link SearchHost} 同一套约定（内部类而非直接传 {@code this}）：
+     * 面板只认识 {@link AiPanel.Host} 这 6 个方法，不必知道这个界面两千多行的其余部分。
+     *
+     * <h2>🔴 这里做的事必须是"读"，不能碰界面</h2>
+     * {@link AiPanel} 会把 {@link #chapterBlocks} 与 {@link #searchableChapters}
+     * 放在<b>后台线程</b>上调用（读章要碰磁盘）。所以这两个方法只允许读
+     * {@code currentFile} / {@code chapters} / {@code store} 这些字段，
+     * <b>不许触碰任何 JavaFX 节点</b> —— 那会在非 UI 线程上改控件，轻则警告、
+     * 重则随机崩溃，而且这种崩溃几乎无法复现。
+     * 需要改界面的动作（跳章）都走 {@link #jumpToChapter}，由 {@code AiPanel}
+     * 用 {@code Platform.runLater} 调过来。
+     */
+    private final class AiHost implements AiPanel.Host {
+
+        @Override
+        public Book currentBook() {
+            return currentBook;
+        }
+
+        @Override
+        public String chapterTitle(int chapterIndex) {
+            return titleAt(chapterIndex) == null ? "" : titleAt(chapterIndex);
+        }
+
+        @Override
+        public List<ChapterBlock> chapterBlocks(int chapterIndex) {
+            if (currentFile == null || chapterIndex < 0 || chapterIndex >= chapters.size()) {
+                return List.of();
+            }
+            try {
+                // 与 showChapter 走同一条路：按字节偏移 seek 读那一小段。
+                // 不复用已渲染的节点 —— 那是把 JavaFX 节点交出去，
+                // 调用方只读它的 text()，但依赖关系会变得很脆。
+                return parser.loadChapter(currentFile, chapters.get(chapterIndex)).blocks();
+            } catch (BookParseException | RuntimeException e) {
+                return List.of();
+            }
+        }
+
+        @Override
+        public List<Integer> searchableChapters(String keyword) {
+            if (store == null || currentBook == null || currentFile == null
+                    || keyword == null || keyword.isBlank()) {
+                return List.of();
+            }
+            try {
+                String fingerprint = SearchStore.fingerprint(currentFile);
+                if (!store.search().isIndexed(currentBook.id(), fingerprint)) {
+                    // 没索引就没法检索。与其在这里偷偷建索引（要几秒，
+                    // 会让用户以为界面卡死），不如让面板明确提示去搜索页建。
+                    return List.of();
+                }
+                // 原文来源：每命中一章才读那一章，不整本读进内存。
+                // 🔴 不能用 ChapterTextBatch —— 那会把整本书读进内存，
+                // 而这里只需要几章。逐章 seek 的代价是几十 KB × 命中章数。
+                SearchResult result = store.search().search(currentBook.id(), keyword,
+                        AI_SEARCH_LIMIT, this::chapterText);
+                List<Integer> out = new ArrayList<>();
+                for (SearchHit hit : result.hits()) {
+                    out.add(hit.chapterIndex());
+                }
+                return out;
+            } catch (RuntimeException e) {
+                return List.of();
+            }
+        }
+
+        @Override
+        public void jumpToChapter(int chapterIndex, String highlight) {
+            jumpToChapterWithHighlight(chapterIndex, highlight);
+        }
+
+        @Override
+        public void setStatus(String text) {
+            statusLabel.setText(text);
+        }
+
+        /** 把一章的段落拼成一段文本，供 FTS 后过滤校验用。 */
+        private String chapterText(int chapterIndex) {
+            List<ChapterBlock> blocks = chapterBlocks(chapterIndex);
+            if (blocks.isEmpty()) {
+                return "";
+            }
+            StringBuilder sb = new StringBuilder();
+            for (ChapterBlock block : blocks) {
+                if (block instanceof ChapterBlock.Paragraph p && p.text() != null) {
+                    if (!sb.isEmpty()) {
+                        sb.append('\n');
+                    }
+                    sb.append(p.text());
+                }
+            }
+            return sb.toString();
+        }
+    }
 
     /**
      * 把当前书名写进窗口标题。

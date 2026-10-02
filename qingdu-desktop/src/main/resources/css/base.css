@@ -633,6 +633,103 @@
     -fx-text-fill: -qd-text-muted;
 }
 
+/* ===================== AI 问答面板 ===================== */
+
+/* 这一节的类名与输入框/按钮刻意与 .reader-search-field / .reader-search-button 同构：
+   侧栏里两个面板并排，用户不该觉得"搜索能打字、提问不能"。
+   所以这里是"复用同一套观感"，而不是"再设计一套 AI 专属风格"。 */
+
+.reader-ai-panel {
+    -fx-background-color: transparent;
+}
+
+.reader-ai-field {
+    -fx-font-size: 13px;
+    -fx-background-color: -qd-content-bg;
+    -fx-text-fill: -qd-text;
+    -fx-prompt-text-fill: -qd-text-faint;
+    -fx-border-color: -qd-border;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+    -fx-padding: 5 8 5 8;
+}
+
+.reader-ai-field:focused {
+    -fx-border-color: -qd-accent;
+}
+
+.reader-ai-ask {
+    -fx-font-size: 13px;
+    -fx-background-color: -qd-accent;
+    /* 与 .reader-search-button 同一个理由：压在强调色上的文字要用 -qd-on-accent */
+    -fx-text-fill: -qd-on-accent;
+    -fx-background-radius: 4;
+    -fx-padding: 5 12 5 12;
+    -fx-cursor: hand;
+}
+
+/* 状态行：正常时是灰的（补充信息），出问题时才转 warn 色。
+   默认给 warn 不行 —— 一半以上的状态行都是"正常等待"，一上来就红会让人紧张。 */
+.reader-ai-status {
+    -fx-font-size: 12px;
+    -fx-text-fill: -qd-text-muted;
+    -fx-padding: 0 0 2 0;
+}
+
+.reader-ai-status-warn {
+    -fx-text-fill: -qd-warn;
+}
+
+.reader-ai-recheck {
+    -fx-font-size: 12px;
+    -fx-background-color: transparent;
+    -fx-text-fill: -qd-accent;
+    -fx-padding: 4 8 4 8;
+    -fx-background-radius: 4;
+    -fx-cursor: hand;
+}
+
+.reader-ai-recheck:hover {
+    -fx-background-color: -qd-hover-bg;
+}
+
+/* 答案本体：比正文小一号、留出左缩进，
+   让它读起来是"程序给的补充"，而不是混进正文里冒充作者的话。 */
+.reader-ai-answer-box {
+    -fx-background-color: -qd-panel-subtle;
+    -fx-background-radius: 6;
+    -fx-padding: 8;
+}
+
+.reader-ai-answer {
+    -fx-font-size: 13px;
+    -fx-text-fill: -qd-text;
+}
+
+.reader-ai-citation-pane {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+
+/* 引用条目用强调色 + 手型光标：它是个可点的动作，
+   长得像普通文字就没人会去点，"可追溯"这个卖点等于没有。 */
+.reader-ai-citation {
+    -fx-font-size: 12px;
+    -fx-text-fill: -qd-accent;
+    -fx-cursor: hand;
+}
+
+.reader-ai-citation:hover {
+    -fx-underline: true;
+}
+
+.reader-ai-citation-list {
+    -fx-background-color: transparent;
+    -fx-border-color: -qd-border;
+    -fx-border-width: 1 0 0 0;
+}
+
 /* ===================== 全书进度条 ===================== */
 
 /* 正文区底下那条 3px 的细线，宽度和版心对齐。

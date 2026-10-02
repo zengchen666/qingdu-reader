@@ -21,7 +21,15 @@ replay_pid*.log
 # ===== 本地临时文件（排查问题、跑冒烟测试时生成的中间产物）=====
 # 这些不是项目内容，只是"当时为了看清情况"临时落盘的文本，
 # 检查完就可以删。统一用下划线开头，方便一眼认出、也方便一次清掉。
+# 🔴 但必须给 Python 包的两个文件开例外：__init__.py 与 __main__.py
+# 以双下划线开头，会被下面这条 _* 规则吞掉 ——
+# 症状是本机跑得好好的，clone 之后 import 直接失败
+#（"attempted relative import with no known parent package"）。
 _*
+
+!qingdu-ai/qingdu_ai/__init__.py
+!qingdu-ai/qingdu_ai/__main__.py
+
 _probe/
 report.txt
 # 全文检索探针自己写的报告：内容是本机测量值 + 本机绝对路径，属于"产物"不属于项目
@@ -77,8 +85,18 @@ Thumbs.db
 desktop.ini
 *~
 
-# ===== 环境与密钥（绝对不要提交）=====
+# ===== Python（qingdu-ai AI 服务）=====
+# ⚠️ .venv 必须忽略 —— 光 fastapi + uvicorn + pydantic 装完就 40+ MB，
+# 进仓库后 clone 的人要多下几十兆，而且里面全是与平台相关的二进制。
+qingdu-ai/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+# 本地环境变量：里面是 API key
 .env
+
+# ===== 环境与密钥（绝对不要提交）=====
 *.pem
 *.key
 application-local.yml
