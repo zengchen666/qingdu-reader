@@ -10,9 +10,12 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
+import java.sql.Types;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -198,17 +201,237 @@ public class BookStore {
      * 所以刚导入的书会浮到最前面，正好是用户想看到的位置。
      */
     public List<RecentBook> list() {
-        String sql = "SELECT * FROM book ORDER BY last_read_at DESC";
+        return list(null, false);
+    }
+
+    /**
+     * 按分组筛选书库。
+     *
+     * <p><b>为什么"未分组"要一个专门的参数而不是靠 groupName = null 去理解？</b>
+     * {@code groupName = null} 在"筛选未分组"和"不筛选"之间是歧义的 ——
+     * SQL 写不出"WHERE group_name IS NULL"和"WHERE 1=1"的统一形式，
+     * 靠调用方约定 null 的含义，迟早有人传错。所以拆成两个方法，
+     * 各自只做一件事。
+     *
+     * @param group 分组名；{@code null} 或空串表示"不筛选"
+     * @return 该分组下的书（按最后阅读时间倒序）
+     */
+    public List<RecentBook> listByGroup(String group) {
+        String normalized = normalizeGroup(group);
+        if (normalized == null) {
+            return list();
+        }
+        return list(normalized, true);
+    }
+
+    /** 只看没归组的书。 */
+    public List<RecentBook> listUngrouped() {
+        return list(null, true);
+    }
+
+    /**
+     * {@link #list()} 与按分组筛选的共同实现。
+     *
+     * <p>筛选交给数据库而不是取回来在 Java 里过一遍：分组筛选会改变行数，
+     * 先取全量再过滤等于把不该读的列也读了。
+     * 代价是 SQL 字符串要动态拼，但可控 —— 分组名是<b>参数</b>不是拼接进去的，
+     * 所以不存在注入问题。
+     */
+    private List<RecentBook> list(String group, boolean filtered) {
+        StringBuilder sql = new StringBuilder("SELECT * FROM book");
+        if (filtered) {
+            sql.append(group == null ? " WHERE group_name IS NULL" : " WHERE group_name = ?");
+        }
+        sql.append(" ORDER BY last_read_at DESC");
+
         List<RecentBook> result = new ArrayList<>();
         try (Connection conn = database.connection();
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                result.add(mapRecent(rs));
+             PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+            if (filtered && group != null) {
+                ps.setString(1, group);
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    result.add(mapRecent(rs));
+                }
             }
             return result;
         } catch (SQLException e) {
             throw new StoreException("读取书架失败：" + e.getMessage(), e);
+        }
+    }
+
+    // ==================== 分组 ====================
+
+    /**
+     * 书库里出现过的全部分组名，按名字排序。
+     *
+     * <p><b>刻意不建 {@code book_group} 表。</b>分组没有"名字之外的属性"
+     * —— 没有颜色、没有排序、没有层级，就是一个标签。
+     * 为一个纯粹的标签建一张表，就得额外维护"哪些标签还在用、哪些该删"
+     * （否则书库里会出现一个空分组，用户还得能删它）。
+     * 直接 {@code SELECT DISTINCT group_name FROM book WHERE group_name IS NOT NULL}
+     * 就够了：<b>空分组自动消失</b>，不需要任何清理逻辑。
+     *
+     * <p>如果将来分组要挂"颜色 / 排序 / 合并"，那时再建表并做一次迁移也不迟。
+     */
+    public List<String> groups() {
+        String sql = "SELECT DISTINCT group_name FROM book "
+                + "WHERE group_name IS NOT NULL AND TRIM(group_name) <> '' "
+                + "ORDER BY group_name";
+        List<String> result = new ArrayList<>();
+        try (Connection conn = database.connection();
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+            while (rs.next()) {
+                result.add(rs.getString(1));
+            }
+            return result;
+        } catch (SQLException e) {
+            throw new StoreException("读取分组失败：" + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 把一本书归到某个分组；传 {@code null} / 空串等于移出分组。
+     *
+     * @return 是否真的改了（本来就在这个分组里则返回 false，让界面知道不用刷新）
+     */
+    public boolean setGroup(String bookId, String group) {
+        if (bookId == null || bookId.isBlank()) {
+            return false;
+        }
+        String normalized = normalizeGroup(group);
+        String current = groupOf(bookId);
+        if (Objects.equals(current, normalized)) {
+            return false;
+        }
+        try (Connection conn = database.connection();
+             PreparedStatement ps = conn.prepareStatement("UPDATE book SET group_name = ? WHERE id = ?")) {
+            if (normalized == null) {
+                ps.setNull(1, Types.VARCHAR);
+            } else {
+                ps.setString(1, normalized);
+            }
+            ps.setString(2, bookId);
+            return ps.executeUpdate() > 0;
+        } catch (SQLException e) {
+            throw new StoreException("设置分组失败：" + e.getMessage(), e);
+        }
+    }
+
+    /** 这本书当前在哪个分组；没归组返回 {@code null}。 */
+    public String groupOf(String bookId) {
+        if (bookId == null || bookId.isBlank()) {
+            return null;
+        }
+        try (Connection conn = database.connection();
+             PreparedStatement ps = conn.prepareStatement("SELECT group_name FROM book WHERE id = ?")) {
+            ps.setString(1, bookId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? normalizeGroup(rs.getString(1)) : null;
+            }
+        } catch (SQLException e) {
+            throw new StoreException("查询分组失败：" + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 分组名的统一规范化：去空白，空串当没有。
+     *
+     * <p>所有写入口都走它，是为了让"未分组"只有一种表示。
+     * 否则用户输入一个空格就能造出一个"看起来有分组、实际筛不出来"的幽灵分组。
+     */
+    private static String normalizeGroup(String group) {
+        if (group == null) {
+            return null;
+        }
+        String stripped = group.strip();
+        return stripped.isEmpty() ? null : stripped;
+    }
+
+    // ==================== 阅读时长 ====================
+
+    /**
+     * 累加一段阅读时长。
+     *
+     * <p>🔴 <b>为什么不是"设置总时长"而是"累加一段"？</b>
+     * 因为时长来自"用户正在读"这个连续过程：开着窗口读 30 分钟、
+     * 关掉、隔天再读 40 分钟，就是两次 {@code addReadingTime}。
+     * 如果接口是"设置"，调用方就得先读出旧值再写回，
+     * 而中间那段时间如果程序退出、旧值就丢了 —— 统计功能最不能接受的就是丢数据。
+     * 累加是<b>幂等友好</b>的：每段时长独立写进 {@code reading_session}，
+     * 重复提交不会把总时长算错。
+     *
+     * <p>同时更新 {@code book.reading_millis} 这个冗余字段：
+     * 书架要显示每本书的时长，那是"每本书一行"的查询，
+     * 每次现算 {@code SUM(millis)} 虽然也快（几十到几百行），
+     * 但把值冗余进主表能让书架列表<b>一次查询拿全</b>，不用多一个关联查询。
+     * 冗余的代价是"两个地方可能不一致"，所以累加必须在<b>同一个事务</b>里做。
+     *
+     * @param bookId 书 ID
+     * @param millis 本次时长（毫秒）；非正数直接忽略
+     */
+    public void addReadingTime(String bookId, long millis) {
+        if (bookId == null || bookId.isBlank() || millis <= 0L) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        try (Connection conn = database.connection()) {
+            boolean autoCommit = conn.getAutoCommit();
+            conn.setAutoCommit(false);
+            try {
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO reading_session(book_id, started_at, ended_at, millis) "
+                                + "VALUES (?, ?, ?, ?)")) {
+                    ps.setString(1, bookId);
+                    ps.setLong(2, now - millis);
+                    ps.setLong(3, now);
+                    ps.setLong(4, millis);
+                    ps.executeUpdate();
+                }
+                // 表不存在时（比如用户拿一个更老的库直接跑新版本，且迁移被跳过），
+                // 增量统计属于"锦上添花"，不该让整个"记录阅读时长"失败
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "UPDATE book SET reading_millis = reading_millis + ? WHERE id = ?")) {
+                    ps.setLong(1, millis);
+                    ps.setString(2, bookId);
+                    ps.executeUpdate();
+                }
+                conn.commit();
+            } catch (SQLException e) {
+                rollbackQuietly(conn);
+                throw e;
+            } finally {
+                conn.setAutoCommit(autoCommit);
+            }
+        } catch (SQLException e) {
+            throw new StoreException("记录阅读时长失败：" + e.getMessage(), e);
+        }
+    }
+
+    /** 这本书的累计阅读时长（毫秒）；没记录过返回 0。 */
+    public long readingMillis(String bookId) {
+        if (bookId == null || bookId.isBlank()) {
+            return 0L;
+        }
+        try (Connection conn = database.connection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT reading_millis FROM book WHERE id = ?")) {
+            ps.setString(1, bookId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? Math.max(0L, rs.getLong(1)) : 0L;
+            }
+        } catch (SQLException e) {
+            throw new StoreException("查询阅读时长失败：" + e.getMessage(), e);
+        }
+    }
+
+    private static void rollbackQuietly(Connection conn) {
+        try {
+            conn.rollback();
+        } catch (SQLException ignored) {
+            // 回滚失败已经无能为力，不能让它盖掉真正的异常
         }
     }
 
@@ -250,11 +473,17 @@ public class BookStore {
     // ==================== 行 → 对象 ====================
 
     /**
-     * 一行 → 一本书 + 它的阅读位置。
+     * 一行 → 一本书 + 它的阅读位置 + 分组 + 时长。
      *
-     * <p>{@code recent()} 和 {@code list()} 取的是同一张表的全部列、映射方式完全一样，
-     * 只有"要不要 LIMIT"这一处差别。抽出来是为了让这两处的字段对应关系<b>只有一份</b> ——
-     * 以后给 book 表加列时，不会出现"书架上有、最近打开里没有"这种不一致。
+     * <p>{@code recent()} / {@code list()} / {@code listByGroup()} 取的是同一张表的全部列、
+     * 映射方式完全一样，只有"WHERE 条件和要不要 LIMIT"这几处差别。抽出来是为了让字段对应关系
+     * <b>只有一份</b> —— 以后给 book 表加列时，不会出现"书架上有、最近打开里没有"这种不一致。
+     *
+     * <p>⚠️ {@code group_name} 与 {@code reading_millis} 是 v2 才加的列。
+     * 迁移一定在 {@code Database} 初始化时跑完了，所以这里直接读；
+     * 但仍然兜一层"读不到就当没有" —— 因为列名拼错时的报错信息
+     * （{@code no such column}）指向的是这一行，跟 {@code Database} 里的迁移没关系，
+     * 不兜底会让人查错方向。
      */
     private RecentBook mapRecent(ResultSet rs) throws SQLException {
         Book book = mapBook(rs);
@@ -264,7 +493,24 @@ public class BookStore {
                 rs.getString("last_chapter_title"),
                 rs.getDouble("last_scroll_ratio"),
                 rs.getLong("last_read_at"));
-        return new RecentBook(book, progress);
+        return new RecentBook(book, progress, optionalString(rs, "group_name"),
+                optionalLong(rs, "reading_millis"));
+    }
+
+    private static String optionalString(ResultSet rs, String column) {
+        try {
+            return rs.getString(column);
+        } catch (SQLException e) {
+            return null;
+        }
+    }
+
+    private static long optionalLong(ResultSet rs, String column) {
+        try {
+            return rs.getLong(column);
+        } catch (SQLException e) {
+            return 0L;
+        }
     }
 
     private Book mapBook(ResultSet rs) throws SQLException {

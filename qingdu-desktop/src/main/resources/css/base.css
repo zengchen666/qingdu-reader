@@ -214,6 +214,14 @@
     -fx-text-fill: -qd-text-faint;
 }
 
+/* 书签备注：单独一行，跟 meta 行区分开。
+   选中态也要跟着变 —— 不然在选中的行里备注还是淡色，
+   看起来像"这一行的备注没生效"。 */
+.reader-bookmark-note {
+    -fx-font-size: 11px;
+    -fx-text-fill: -qd-text-muted;
+}
+
 .reader-list .list-cell:filled:selected .reader-bookmark-title {
     -fx-text-fill: -qd-selection-text;
 }
@@ -221,6 +229,11 @@
 .reader-list .list-cell:filled:selected .reader-bookmark-meta {
     -fx-text-fill: -qd-selection-text;
     -fx-opacity: 0.75;
+}
+
+.reader-list .list-cell:filled:selected .reader-bookmark-note {
+    -fx-text-fill: -qd-selection-text;
+    -fx-opacity: 0.9;
 }
 
 /* 空列表时的提示文字 */
@@ -405,6 +418,53 @@
     -fx-text-fill: -qd-warn;
 }
 
+/* 累计阅读时长。用 muted 而不是 accent：
+   进度（第几章）才是"我现在读到哪"，时长是补充信息，
+   两者都用强调色会分不出主次。 */
+.book-card-time {
+    -fx-font-size: 11px;
+    -fx-text-fill: -qd-text-muted;
+}
+
+/* 分组名：给一点底色让它读起来是"标签"而不是正文，
+   但用 panel-subtle 而不是强调色 —— 一排卡片全是强调色就成花了。 */
+.book-card-group {
+    -fx-font-size: 10px;
+    -fx-text-fill: -qd-text-muted;
+    -fx-background-color: -qd-panel-subtle;
+    -fx-background-radius: 3;
+    -fx-padding: 1 5 1 5;
+    -fx-max-width: 100%;
+}
+
+/* ---- 分组筛选条 ----
+   整条在"一个分组都没有"时被 setVisible(false)+setManaged(false)，
+   所以这里不用管"怎么隐藏"。 */
+.bookshelf-filter {
+    -fx-font-size: 12px;
+    -fx-text-fill: -qd-text-muted;
+    -fx-background-color: transparent;
+    -fx-background-radius: 12;
+    -fx-border-color: -qd-border;
+    -fx-border-radius: 12;
+    -fx-border-width: 1;
+    -fx-padding: 3 12 3 12;
+    -fx-cursor: hand;
+}
+
+.bookshelf-filter:hover {
+    -fx-background-color: -qd-hover-bg;
+}
+
+/* 选中态用 accent 填充 + on-accent 文字：
+   -qd-on-accent 在每套主题里都有值（墨黑主题的 accent 是亮蓝，
+   写死白色会糊成一片），所以这里不能写死颜色。 */
+.bookshelf-filter:selected {
+    -fx-background-color: -qd-accent;
+    -fx-text-fill: -qd-on-accent;
+    -fx-border-color: -qd-accent;
+}
+
 /* ---- 占位封面 ----
 
    TXT 小说没有封面图，所以书架上绝大多数格子走的是这一支：
@@ -517,6 +577,60 @@
 .reader-list .list-cell:filled:selected .reader-search-title,
 .reader-list .list-cell:filled:selected .reader-search-snippet {
     -fx-text-fill: -qd-selection-text;
+}
+
+/* ---- 范围切换（本书 / 全库）----
+   样式与 .bookshelf-filter 刻意做成同一套（圆角药丸 + 选中填强调色），
+   因为它们是同一类控件：在一排互斥的选项里挑一个。
+   用 ToggleGroup 保证互斥，不自己写监听去纠正"两个都被选中"。 */
+.reader-search-scope {
+    -fx-font-size: 12px;
+    -fx-text-fill: -qd-text-muted;
+    -fx-background-color: transparent;
+    -fx-background-radius: 12;
+    -fx-border-color: -qd-border;
+    -fx-border-radius: 12;
+    -fx-border-width: 1;
+    -fx-padding: 3 14 3 14;
+    -fx-cursor: hand;
+}
+
+.reader-search-scope:hover {
+    -fx-background-color: -qd-hover-bg;
+}
+
+.reader-search-scope:selected {
+    -fx-background-color: -qd-accent;
+    -fx-text-fill: -qd-on-accent;
+    -fx-border-color: -qd-accent;
+}
+
+/* ---- 「还有 N 本没建索引」那一行 ----
+   用 warn 色而不是 muted：这句话说的是"你搜得不全"，
+   是个要用户去处理的问题，不是补充信息。 */
+.reader-search-coverage {
+    -fx-font-size: 12px;
+    -fx-text-fill: -qd-warn;
+}
+
+/* ---- 全库结果的书分组头 ----
+   头比正文醒目一档，但不填底色：一本书一个色块的话，
+   十几本书的结果列表就碎成一片了。用一条上边框来分隔更安静。 */
+.reader-search-book-header {
+    -fx-padding: 8 0 4 0;
+    -fx-border-color: -qd-border transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+}
+
+.reader-search-book-title {
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -qd-text-heading;
+}
+
+.reader-search-book-count {
+    -fx-font-size: 11px;
+    -fx-text-fill: -qd-text-muted;
 }
 
 /* ===================== 全书进度条 ===================== */

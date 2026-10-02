@@ -24,9 +24,12 @@ import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.ContentDisplay;
 import javafx.scene.control.ContextMenu;
+import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
@@ -41,8 +44,10 @@ import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
+import javafx.scene.control.TextArea;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
+import javafx.scene.control.Tooltip;
 import javafx.scene.input.KeyCombination;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
@@ -128,12 +133,12 @@ public class ReaderView extends BorderPane {
      *       cfg 里的 {@code -Djpackage.app-version} 和 zip 的文件名；</li>
      *   <li>这里 —— 决定用户点「帮助 → 关于」时看到的数字。</li>
      * </ul>
-     * 三处不一致的后果很难看：exe 属性里写着 0.2.1，点开「关于」却是 0.2.0。
+     * 三处不一致的后果很难看：exe 属性里写着 0.3.0，点开「关于」却是 0.2.0。
      * 之所以不写成自动读取（{@code getPackage().getImplementationVersion()}），
      * 是因为开发模式下（{@code mvn javafx:run}）它恒为 null ——
      * 那样"关于"里就会显示一串 {@code null}，比手写一个常量更糟。
      */
-    public static final String VERSION = "0.2.1";
+    public static final String VERSION = "0.3.0";
 
     /** 「最近打开」菜单最多列几本。 */
     private static final int RECENT_LIMIT = 12;
@@ -243,6 +248,19 @@ public class ReaderView extends BorderPane {
     private SettingsWindow settingsWindow;
 
     /**
+     * 阅读时长计时器。
+     *
+     * <p>🔴 它<b>必须在构造器里赋值</b>，不能写成字段初始化器 ——
+     * 字段初始化器在 {@code this.store = store} <b>之前</b>执行，
+     * 那样 {@code backedBy(store)} 拿到的永远是 null，
+     * 表现是"时长统计永远记不上"，而且没有任何报错。
+     *
+     * <p>它自己有"当前正在读哪本"的状态，所以换书/关窗时只要调 {@code finish()}，
+     * 不需要调用方记住"上一本是谁"—— 那正是最容易出错的地方。
+     */
+    private final ReadingTimeTracker readingTime;
+
+    /**
      * 阅读态的整个中心区（左侧「目录 / 书签」+ 右边正文）。
      *
      * <p>它和 {@link #bookshelf} 是"中心区"的两种形态，二选一挂上去。
@@ -283,6 +301,22 @@ public class ReaderView extends BorderPane {
     private String highlightTerm;
 
     /**
+     * 跨书检索跳转时"书打开后要落在第几章"。
+     *
+     * <p><b>为什么需要这么一个字段？</b>因为打开一本书是<b>异步</b>的
+     * （{@link #open} 里建索引要读整个文件，放后台线程），
+     * 而"跳到第 N 章"必须在章节列表建好之后才能做。
+     * 于是跨书跳转只能拆成两步：先记下目标章号，等
+     * {@link #applyResult} 把书加载完，再兑现它。
+     *
+     * <p>🔴 <b>它必须带 bookId。</b>用户点了《沧澜录》的结果、
+     * 在它解析完之前又点了另一处搜索跳到别的书 ——
+     * 不校验 bookId 的话，这个"待兑现的跳转"会落到<b>另一本书</b>上，
+     * 症状是"点 A 的结果打开了 B，内容是 B 的第 N 章"，完全不报错。
+     */
+    private PendingJump pendingJump;
+
+    /**
      * 进度回写的防抖器。
      *
      * <p>滚动时会连续触发几十上百次 {@code vvalue} 变化，每次都写一次数据库
@@ -306,13 +340,16 @@ public class ReaderView extends BorderPane {
     public ReaderView(QingduStore store) {
         this.store = store;
         this.settings = loadSettingsQuietly();
+        this.readingTime = ReadingTimeTracker.backedBy(store);
 
         // 主题菜单要在 buildTop() 之前建好，否则菜单栏第一次显示时是空的
         buildThemeMenu();
 
         // 搜索面板要在 buildCenter() 之前建好：它作为左侧第三个标签页的内容被装进去。
-        // store 为 null（数据库没打开）时给它 null，面板自己会切成"不可用"的样子
-        searchPanel = new SearchPanel(store == null ? null : store.search(), new SearchHost());
+        // store 为 null（数据库没打开）时给它 null，面板自己会切成"不可用"的样子。
+        // 传的是 store 而不是 store.search()：全库检索还要用 books() 和建索引任务，
+        // 只给一个 SearchStore 的话面板就得自己再去摸 QingduStore，那是依赖倒挂。
+        searchPanel = new SearchPanel(store, new SearchHost());
 
         getStyleClass().add("reader-window");
         readerPane = buildCenter();
@@ -340,6 +377,11 @@ public class ReaderView extends BorderPane {
             @Override
             public void remove(Book book) {
                 removeFromShelf(book);
+            }
+
+            @Override
+            public void editGroup(Book book) {
+                ReaderView.this.editGroup(book);
             }
         });
         showBookshelf();
@@ -812,11 +854,28 @@ public class ReaderView extends BorderPane {
         title.setWrapText(true);
 
         Label meta = new Label("章内 " + Math.round(bookmark.scrollRatio() * 100) + "%    ·    "
-                + formatTime(bookmark.createdAt())
-                + (bookmark.note() == null ? "" : "    ·    " + bookmark.note()));
+                + formatTime(bookmark.createdAt()));
         meta.getStyleClass().add("reader-bookmark-meta");
 
-        VBox box = new VBox(2, title, meta);
+        // 🔴 备注<b>单独占一行</b>，不接在 meta 后面。
+        // 之前它是拼在 meta 尾巴上的，于是"备注写了 200 字"会把
+        // 「章内 42% · 10月2日 21:33」这行一起撑成两行 ——
+        // 而那行是固定格式的辅助信息，被备注带偏之后列表会参差不齐。
+        Label note = new Label();
+        String text = (bookmark.note() == null) ? "" : bookmark.note().strip();
+        if (!text.isEmpty()) {
+            note.setText("✎ " + text);
+            note.getStyleClass().add("reader-bookmark-note");
+            note.setWrapText(true);
+            // 备注可能很长，限两行：全展开的话一条长备注能把整个列表撑变形
+            note.setMaxHeight(36);
+            note.setTooltip(new Tooltip(text));
+        } else {
+            note.setVisible(false);
+            note.setManaged(false);
+        }
+
+        VBox box = new VBox(2, title, meta, note);
         box.getStyleClass().add("reader-bookmark-cell");
         return box;
     }
@@ -824,9 +883,11 @@ public class ReaderView extends BorderPane {
     private ContextMenu buildBookmarkContextMenu() {
         MenuItem gotoItem = new MenuItem("跳转到这条书签");
         gotoItem.setOnAction(e -> gotoSelectedBookmark());
+        MenuItem noteItem = new MenuItem("备注…");
+        noteItem.setOnAction(e -> editSelectedBookmarkNote());
         MenuItem deleteItem = new MenuItem("删除这条书签");
         deleteItem.setOnAction(e -> deleteSelectedBookmark());
-        return new ContextMenu(gotoItem, deleteItem);
+        return new ContextMenu(gotoItem, noteItem, new SeparatorMenuItem(), deleteItem);
     }
 
     /**
@@ -880,6 +941,9 @@ public class ReaderView extends BorderPane {
      * 否则关掉一本书之后，上一本的书名还会赖在上面。
      */
     private void showBookshelf() {
+        // 回到书架 = 不在读任何书。必须先结算再切界面，
+        // 否则用户在书架上看到的时长会少算刚才那段时间
+        readingTime.finish();
         setCenter(bookshelf);
         bookshelf.refresh();
 
@@ -1048,6 +1112,95 @@ public class ReaderView extends BorderPane {
         }
     }
 
+    // ==================== 分组 ====================
+
+    /**
+     * 编辑一本书的分组。
+     *
+     * <p><b>为什么要用 ComboBox 而不是 TextField？</b>
+     * 分组是<b>标签</b>：用户想要的是"跟《斗破苍穹》放一起"，
+     * 而"玄幻"这个字他已经用过五次了。让他手打一遍，
+     * 打成"玄幻 "（多一个空格）就会多出一个筛不到书的幽灵分组。
+     * 存库那一步有 {@code normalizeGroup} 兜底（strip）能挡住，
+     * 但既然能让他点一下就选中，就没有必要让他打。
+     *
+     * <p>所以：可编辑 + 已有分组作为候选。第一项固定是"（不分组）"。
+     */
+    private void editGroup(Book book) {
+        if (store == null) {
+            statusLabel.setText("分组功能不可用：本地数据库没有打开");
+            return;
+        }
+        List<String> groups;
+        String current;
+        try {
+            groups = store.books().groups();
+            current = store.books().groupOf(book.id());
+        } catch (StoreException e) {
+            showError("读取分组失败", e);
+            return;
+        }
+
+        ComboBox<String> box = new ComboBox<>();
+        box.setEditable(true);
+        // ⚠️ 刻意不加自定义样式类：.dialog-pane 里那套规则已经覆盖了弹窗里的控件，
+        // 再加一个没定义的类名只会让人以为"样式没生效"。
+        // 真正需要额外处理的是 ComboBox 自身的下拉列表（它是一个独立窗口），
+        // 那部分由各主题的 -fx-* 变量兜住。
+        // 第一项是"清空分组"，用 null 表示；ComboBox 允许 null item
+        box.getItems().add(null);
+        box.getItems().addAll(groups);
+        box.setValue((current == null) ? null : current);
+        box.getEditor().setPromptText("分组名，或从已有分组里选");
+
+        VBox content = new VBox(10,
+                new Label("把《" + book.title() + "》放进哪个分组？"), box);
+        content.setPrefWidth(340);
+
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("归入分组");
+        dialog.getDialogPane().setContent(content);
+        ButtonType ok = new ButtonType("确定", ButtonBar.ButtonData.OK_DONE);
+        dialog.getDialogPane().getButtonTypes().setAll(ok, ButtonType.CANCEL);
+        ThemeStyles.apply(dialog.getDialogPane(), settings.theme());
+        // 让"确定"默认聚焦：分组这件事九成是点一下就走
+        dialog.setResultConverter(button ->
+                (button != null && button.getButtonData() == ButtonBar.ButtonData.OK_DONE)
+                        ? ok : null);
+
+        // 定位到主窗口中间：非模态弹窗默认会出现在屏幕左上角，
+        // 用户会以为那是个"没关掉的旧窗口"
+        Window owner = windowOrNull();
+        if (owner != null) {
+            dialog.initOwner(owner);
+            dialog.setX(owner.getX() + owner.getWidth() / 2 - 190);
+            dialog.setY(owner.getY() + owner.getHeight() / 2 - 120);
+        }
+
+        Optional<ButtonType> choice = dialog.showAndWait();
+        if (choice.isEmpty() || choice.get() != ok) {
+            return;
+        }
+
+        // ⚠️ 一定要读 editor 而不是 getValue()：
+        // 用户在可编辑 ComboBox 里打了字但没触发"选值"时，
+        // getValue() 拿到的还是旧值，而 editor 里才是他刚打的字
+        String input = (box.getEditor() == null) ? null : box.getEditor().getText();
+        String value = (input == null || input.isBlank()) ? box.getValue() : input;
+        String group = (value == null) ? null : value.strip();
+
+        try {
+            if (store.books().setGroup(book.id(), group)) {
+                bookshelf.refresh();
+                statusLabel.setText(group == null
+                        ? "已移出分组：" + book.title()
+                        : "已归入「" + group + "」：" + book.title());
+            }
+        } catch (StoreException e) {
+            showError("设置分组失败", e);
+        }
+    }
+
     /**
      * 打开指定文件。
      *
@@ -1143,9 +1296,25 @@ public class ReaderView extends BorderPane {
 
         int target = clamp(saved == null ? 0 : saved.chapterIndex(), 0, chapters.size() - 1);
 
+        // 跨书检索跳转：这本书正是用户点的那个结果所在的书，
+        // 于是目标章号用搜索结果里的那个，而不是上次读到的位置。
+        // bookId 的比对是必须的 —— 见 pendingJump 字段的注释。
+        String jumpHighlight = null;
+        PendingJump jump = pendingJump;
+        pendingJump = null;
+        if (jump != null && jump.bookId().equals(currentBook.id())) {
+            target = clamp(jump.chapterIndex(), 0, chapters.size() - 1);
+            jumpHighlight = jump.highlight();
+        }
+
         // select() 会同步触发选中监听器，所以这个标记在监听器里一定读得到
         restoringProgress = true;
         restoreRatio = (saved == null) ? 0 : saved.scrollRatio();
+        if (jumpHighlight != null) {
+            // 高亮词要在 select() 之前挂上：监听器是同步触发的，
+            // select() 返回时章节已经渲染完了，那时候再设就晚了一帧
+            highlightTerm = jumpHighlight;
+        }
         chapterList.getSelectionModel().select(target);
         restoringProgress = false;
         restoreRatio = 0;
@@ -1175,6 +1344,11 @@ public class ReaderView extends BorderPane {
         currentChapterIndex = -1;
         bookmarkedChapters.clear();
         highlightTerm = null;
+        // 同理：还没兑现的跨书跳转必须作废。
+        // 用户点了《沧澜录》的结果、在它解析完之前按了「返回书架」，
+        // 那个跳转就不该再发生了 —— 而 bookId 的比对只能挡住"落到别的书"，
+        // 挡不住"书根本没打开却跳了一章"。
+        pendingJump = null;
         chapterList.getItems().clear();
         bookmarkList.getItems().clear();
         contentBox.getChildren().clear();
@@ -1443,6 +1617,9 @@ public class ReaderView extends BorderPane {
     public void flushProgress() {
         progressDebounce.stop();
         persistProgress();
+        // 关窗口时也要结算时长：这是最后一段，
+        // 不结就等于"关掉程序的那一刻在读的时间"永远丢
+        readingTime.finish();
     }
 
     private void persistProgress() {
@@ -1482,6 +1659,9 @@ public class ReaderView extends BorderPane {
                         keep.chapterTitle(), keep.scrollRatio(), now);
         try {
             store.books().save(currentBook, chapters.size(), position);
+            // 打开一本书就是开始读它。放在这里而不是 open() 入口：
+            // 解析失败、格式不支持这些路径根本不该计时
+            readingTime.start(currentBook.id());
         } catch (StoreException e) {
             warnOnce("记录这本书失败", e);
         }
@@ -1566,6 +1746,74 @@ public class ReaderView extends BorderPane {
             statusLabel.setText("已删除书签：" + selected.summary());
         } catch (StoreException e) {
             showError("删除书签失败", e);
+        }
+    }
+
+    /**
+     * 给选中的书签写/改备注。
+     *
+     * <p><b>为什么是模态对话框，而"阅读设置"是非模态窗口？</b>
+     * 两者要的信息量不同。设置面板是"一边拖一边看正文"的连续调整，
+     * 所以不能锁主窗口；备注是"写一句话、按确定"的一次性输入 ——
+     * 写的时候你并不需要看正文，锁住反而防止误点。
+     *
+     * <p>用 {@link TextArea} 而不是 {@code TextField}：备注常常是半句话
+     * （"这里埋了伏笔"），单行输入框会在光标处横向滚动，读起来很难受。
+     * 给三行高度、允许换行，短备注也只占一行。
+     */
+    private void editSelectedBookmarkNote() {
+        Bookmark selected = bookmarkList.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            statusLabel.setText("先选中一条书签");
+            return;
+        }
+        if (store == null) {
+            statusLabel.setText("书签功能不可用：本地数据库没有打开");
+            return;
+        }
+
+        TextArea area = new TextArea();
+        area.setText((selected.note() == null) ? "" : selected.note());
+        area.setWrapText(true);
+        area.setPrefRowCount(3);
+        // 选中原备注：改备注九成是改一两个字，全选好直接打字覆盖
+        area.selectAll();
+
+        VBox content = new VBox(10,
+                new Label("第 " + (selected.chapterIndex() + 1) + " 章 的备注："),
+                area);
+        content.setPrefWidth(360);
+
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("书签备注");
+        dialog.getDialogPane().setContent(content);
+        ButtonType ok = new ButtonType("保存", ButtonBar.ButtonData.OK_DONE);
+        dialog.getDialogPane().getButtonTypes().setAll(ok, ButtonType.CANCEL);
+        ThemeStyles.apply(dialog.getDialogPane(), settings.theme());
+        dialog.setResultConverter(button ->
+                (button != null && button.getButtonData() == ButtonBar.ButtonData.OK_DONE)
+                        ? ok : null);
+
+        Window owner = windowOrNull();
+        if (owner != null) {
+            dialog.initOwner(owner);
+            dialog.setX(owner.getX() + owner.getWidth() / 2 - 200);
+            dialog.setY(owner.getY() + owner.getHeight() / 2 - 140);
+        }
+
+        Optional<ButtonType> choice = dialog.showAndWait();
+        if (choice.isEmpty() || choice.get() != ok) {
+            return;
+        }
+        try {
+            store.bookmarks().updateNote(selected.id(), area.getText());
+            reloadBookmarks();
+            // 刷新后按 id 重新选回原来那条：用户是"选中→写备注"这个动作链，
+            // 不选回来的话紧接着想删/想再改就得重新点一次
+            selectBookmarkInList(selected);
+            statusLabel.setText("已保存备注");
+        } catch (StoreException e) {
+            showError("保存备注失败", e);
         }
     }
 
@@ -1682,6 +1930,12 @@ public class ReaderView extends BorderPane {
         if (settingsWindow != null && settingsWindow.isShowing()) {
             settingsWindow.hide();
         }
+        // 搜索面板可能正在批量建索引。主窗口一关，JavaFX 立刻退出，
+        // 而后台线程是守护线程 —— 索引写到一半被砍掉不会损坏数据库
+        // （SearchStore.index 是"先写临时内容再替换"），
+        // 但用户下次打开会发现"建到一半的那几本又要重build一遍"，
+        // 毫无来由。所以这里主动喊停：已建好的保留，没建的下次再说。
+        searchPanel.dispose();
     }
 
     private void applyTheme() {
@@ -1911,6 +2165,40 @@ public class ReaderView extends BorderPane {
             chapterList.scrollTo(chapterIndex);
         }
 
+        /**
+         * 跨书检索跳转：打开另一本书并落在指定章。
+         *
+         * <p>本方法<b>不等待</b>——打开一本书要读整个文件建索引，是异步的。
+         * 所以这里只做两件事：记下目标（{@link #pendingJump}）、
+         * 然后发起 {@link #open}。真正兑现发生在
+         * {@link #applyResult} 里，那时机正好是章节列表刚建好的时候。
+         */
+        @Override
+        public void openBookAt(String bookId, int chapterIndex, String highlight) {
+            if (store == null || bookId == null || bookId.isBlank()) {
+                return;
+            }
+            // 已经是当前书了：走快捷路径，别为了跳一章把整本书重开一遍
+            if (currentBook != null && bookId.equals(currentBook.id())) {
+                jumpToChapter(chapterIndex, highlight);
+                return;
+            }
+            // 书可能被从书架移除了，而搜索索引还在（外键级联只管 book 表，
+            // 索引清理走的是另一条路）。这时候要说清楚，而不是让 open() 报"文件不存在"
+            Book target = store.books().find(bookId).orElse(null);
+            if (target == null) {
+                setStatus("这本书已经不在书架上了");
+                return;
+            }
+            Path path = target.filePath();
+            if (path == null || !Files.isRegularFile(path)) {
+                promptMissingBook(target);
+                return;
+            }
+            pendingJump = new PendingJump(bookId, chapterIndex, highlight);
+            open(path);
+        }
+
         @Override
         public void setStatus(String text) {
             statusLabel.setText(text);
@@ -1963,5 +2251,15 @@ public class ReaderView extends BorderPane {
      */
     private record LoadResult(Book book, TxtChapterSplitter.Report report,
                               CharsetDetector.Detection detection) {
+    }
+
+    /**
+     * 一次"跨书检索跳转"的待兑现目标。
+     *
+     * @param bookId       要落在哪本书上（<b>用来防止兑现到别的书</b>，见字段注释）
+     * @param chapterIndex 落在第几章
+     * @param highlight    要高亮的词，可为 null
+     */
+    private record PendingJump(String bookId, int chapterIndex, String highlight) {
     }
 }

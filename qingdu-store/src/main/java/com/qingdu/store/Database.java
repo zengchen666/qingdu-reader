@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 
@@ -25,7 +26,7 @@ import java.sql.Statement;
 public final class Database {
 
     /** 当前 schema 版本，写进 SQLite 内置的 {@code user_version} 里。 */
-    private static final int SCHEMA_VERSION = 1;
+    private static final int SCHEMA_VERSION = 2;
 
     /** 数据库文件所在目录的名字，放在用户主目录下。 */
     private static final String DATA_DIR_NAME = ".qingdu-reader";
@@ -119,69 +120,168 @@ public final class Database {
     // ==================== 表结构 ====================
 
     /**
-     * 建表。
+     * 建表 + 迁移。
+     *
+     * <p><b>整体结构是"基线表 + 迁移链"，而不是"直接建最新表"。</b>
+     * {@link #createBaselineTables()} 里的 DDL 是 <b>v1 形态</b>、<b>永远不要改</b>；
+     * 从 v1 往后的每一步都在 {@link #migrate} 里。这么分是为了让
+     * <b>新库和老库走完全同一条代码路径</b>：新库的 {@code user_version} 是 0，
+     * 照样先建 v1 形态的表、再被迁移升到最新版。
+     *
+     * <p>代价是新库会多做一次 {@code ALTER TABLE}（几毫秒）。
+     * 换来的是"只有一条路径" —— 如果分成"新库直接建最新表"和"老库走迁移"两条，
+     * 就得为两条路径各写一套测试，而且以后每加一个字段都要想一遍"新库走哪条"。
+     *
+     * <p>全部 DDL 与迁移放在<b>同一个事务</b>里：进程在
+     * {@code ALTER TABLE} 之后、{@code user_version = 2} 之前被杀的话，
+     * 下次启动会回滚到干净状态重新来，不会卡在"改了一半"的库上。
+     */
+    private void initSchema() {
+        try (Connection conn = connection()) {
+            boolean autoCommit = conn.getAutoCommit();
+            conn.setAutoCommit(false);
+            try (Statement st = conn.createStatement()) {
+                createBaselineTables(st);
+                int current = readUserVersion(conn);
+                if (current < 1) {
+                    // 0 → 1：v1 就是基线本身，没有需要改的东西。
+                    // 这个分支留着是为了让版本号与迁移步骤一一对应 ——
+                    // 将来有人问"v1 的库能不能直接用"，答案是"能，它就是基线"。
+                    current = 1;
+                }
+                if (current < 2) {
+                    migrateV1ToV2(conn, st);
+                }
+                st.execute("PRAGMA user_version = " + SCHEMA_VERSION);
+                conn.commit();
+            } catch (SQLException e) {
+                rollbackQuietly(conn);
+                throw new StoreException("初始化数据库表结构失败：" + e.getMessage(), e);
+            } finally {
+                conn.setAutoCommit(autoCommit);
+            }
+        } catch (SQLException e) {
+            throw new StoreException("初始化数据库表结构失败（无法连接数据库）：" + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 基线表（v1 形态）。
+     *
+     * <p>🔴 <b>这里的 DDL 是历史快照，不要再改。</b>
+     * 所有新版本要加的列 / 表，都去 {@link #migrate} 里加。
+     * 改这里等于让"老用户升级"和"新用户安装"走出两种不同的库结构。
      *
      * <p>全部用 {@code CREATE TABLE IF NOT EXISTS}，所以这个方法是<b>幂等</b>的 ——
      * 每次启动都跑一遍，已有数据不受影响。这是最简单也最不容易出错的做法：
      * 不引入 Flyway / Liquibase 这类迁移框架，就为了让一个单文件桌面程序
      * 能自己把表建好。
-     *
-     * <p>版本号写进 {@code PRAGMA user_version}。等 schema 真的要改的时候
-     * （比如加字段），就可以靠它来判断"这是老库，需要升级"。
-     * 现在只有版本 1，所以还没有升级逻辑 —— 但有这个数字在，
-     * 以后加逻辑时不用回头改历史代码。
      */
-    private void initSchema() {
-        try (Connection conn = connection(); Statement st = conn.createStatement()) {
+    private void createBaselineTables(Statement st) throws SQLException {
+        st.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS book (
+                    id                 TEXT    PRIMARY KEY,
+                    path               TEXT    NOT NULL,
+                    title              TEXT    NOT NULL,
+                    author             TEXT,
+                    format             TEXT    NOT NULL DEFAULT 'TXT',
+                    chapter_count      INTEGER NOT NULL DEFAULT 0,
+                    added_at           INTEGER NOT NULL,
+                    last_chapter_index INTEGER NOT NULL DEFAULT 0,
+                    last_chapter_title TEXT,
+                    last_scroll_ratio  REAL    NOT NULL DEFAULT 0,
+                    last_read_at       INTEGER NOT NULL
+                )""");
 
-            st.executeUpdate("""
-                    CREATE TABLE IF NOT EXISTS book (
-                        id                 TEXT    PRIMARY KEY,
-                        path               TEXT    NOT NULL,
-                        title              TEXT    NOT NULL,
-                        author             TEXT,
-                        format             TEXT    NOT NULL DEFAULT 'TXT',
-                        chapter_count      INTEGER NOT NULL DEFAULT 0,
-                        added_at           INTEGER NOT NULL,
-                        last_chapter_index INTEGER NOT NULL DEFAULT 0,
-                        last_chapter_title TEXT,
-                        last_scroll_ratio  REAL    NOT NULL DEFAULT 0,
-                        last_read_at       INTEGER NOT NULL
-                    )""");
+        // 书是"按路径"找的，但刻意不加 UNIQUE：
+        // BookId 在文件不存在时会退化成"绝对路径归一化"，而文件后来又出现了
+        // 就可能算出另一个 ID。加了唯一约束会让这种边缘情况直接抛异常写不进去，
+        // 得不偿失。代价是极小概率下同一个路径出现两行，可以接受。
+        st.executeUpdate("CREATE INDEX IF NOT EXISTS ix_book_path ON book(path)");
+        st.executeUpdate("CREATE INDEX IF NOT EXISTS ix_book_last_read ON book(last_read_at DESC)");
 
-            // 书是"按路径"找的，但刻意不加 UNIQUE：
-            // BookId 在文件不存在时会退化成"绝对路径归一化"，而文件后来又出现了
-            // 就可能算出另一个 ID。加了唯一约束会让这种边缘情况直接抛异常写不进去，
-            // 得不偿失。代价是极小概率下同一个路径出现两行，可以接受。
-            st.executeUpdate("CREATE INDEX IF NOT EXISTS ix_book_path ON book(path)");
-            st.executeUpdate("CREATE INDEX IF NOT EXISTS ix_book_last_read ON book(last_read_at DESC)");
+        st.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS bookmark (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    book_id       TEXT    NOT NULL REFERENCES book(id) ON DELETE CASCADE,
+                    chapter_index INTEGER NOT NULL,
+                    chapter_title TEXT    NOT NULL,
+                    scroll_ratio  REAL    NOT NULL DEFAULT 0,
+                    note          TEXT,
+                    created_at    INTEGER NOT NULL
+                )""");
 
-            st.executeUpdate("""
-                    CREATE TABLE IF NOT EXISTS bookmark (
-                        id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                        book_id       TEXT    NOT NULL REFERENCES book(id) ON DELETE CASCADE,
-                        chapter_index INTEGER NOT NULL,
-                        chapter_title TEXT    NOT NULL,
-                        scroll_ratio  REAL    NOT NULL DEFAULT 0,
-                        note          TEXT,
-                        created_at    INTEGER NOT NULL
-                    )""");
+        // 书签永远是"按某本书 + 按位置"查的，索引就按这个组合建
+        st.executeUpdate("CREATE INDEX IF NOT EXISTS ix_bookmark_book "
+                + "ON bookmark(book_id, chapter_index, scroll_ratio)");
 
-            // 书签永远是"按某本书 + 按位置"查的，索引就按这个组合建
-            st.executeUpdate("CREATE INDEX IF NOT EXISTS ix_bookmark_book "
-                    + "ON bookmark(book_id, chapter_index, scroll_ratio)");
+        st.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS setting (
+                    key        TEXT PRIMARY KEY,
+                    value      TEXT NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )""");
+    }
 
-            st.executeUpdate("""
-                    CREATE TABLE IF NOT EXISTS setting (
-                        key        TEXT PRIMARY KEY,
-                        value      TEXT NOT NULL,
-                        updated_at INTEGER NOT NULL
-                    )""");
+    /**
+     * v1 → v2：分组、阅读时长。
+     *
+     * <p><b>为什么 {@code book} 表加列要写成"检查 → 没有才 ALTER"？</b>
+     * {@code ALTER TABLE ADD COLUMN} 撞上已有的列会直接抛
+     * {@code duplicate column name}，而"用户库里已经有这一列"是完全可能的正常情况 ——
+     * 上一版程序崩在 {@code ALTER} 之后、{@code user_version} 之前，
+     * 这次启动就会撞上。多查一次 {@code PRAGMA table_info} 换掉一种崩溃，不亏。
+     *
+     * <p>新增的 {@code reading_session} 不覆盖任何列，所以没有这个风险。
+     */
+    private void migrateV1ToV2(Connection conn, Statement st) throws SQLException {
+        if (!hasColumn(conn, "book", "group_name")) {
+            // 刻意不加索引：书库是"几十到几百本"的量级，全表扫一遍的代价可以忽略，
+            // 而多一个索引就多一处"建库时忘了建索引"的失败点。等真的攒到几千本再说。
+            st.executeUpdate("ALTER TABLE book ADD COLUMN group_name TEXT");
+        }
+        if (!hasColumn(conn, "book", "reading_millis")) {
+            st.executeUpdate("ALTER TABLE book ADD COLUMN reading_millis INTEGER NOT NULL DEFAULT 0");
+        }
 
-            st.executeUpdate("PRAGMA user_version = " + SCHEMA_VERSION);
+        st.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS reading_session (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    book_id    TEXT    NOT NULL REFERENCES book(id) ON DELETE CASCADE,
+                    started_at INTEGER NOT NULL,
+                    ended_at   INTEGER NOT NULL,
+                    millis     INTEGER NOT NULL
+                )""");
+        // "这本书最近读了多久"是唯一会高频问的问题
+        st.executeUpdate("CREATE INDEX IF NOT EXISTS ix_session_book ON reading_session(book_id)");
+    }
 
-        } catch (SQLException e) {
-            throw new StoreException("初始化数据库表结构失败：" + e.getMessage(), e);
+    /** 这张表里有没有这一列？（{@code PRAGMA table_info} 的第 2 列是列名） */
+    private static boolean hasColumn(Connection conn, String table, String column) throws SQLException {
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("PRAGMA table_info(" + table + ")")) {
+            while (rs.next()) {
+                if (column.equalsIgnoreCase(rs.getString(2))) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    /** 读出库当前的 schema 版本；读不到当 0 处理。 */
+    private static int readUserVersion(Connection conn) throws SQLException {
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("PRAGMA user_version")) {
+            return rs.next() ? rs.getInt(1) : 0;
+        }
+    }
+
+    private static void rollbackQuietly(Connection conn) {
+        try {
+            conn.rollback();
+        } catch (SQLException ignored) {
+            // 回滚失败已经无能为力，不能让它盖掉真正的异常
         }
     }
 

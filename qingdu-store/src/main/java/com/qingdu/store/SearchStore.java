@@ -1,6 +1,8 @@
 package com.qingdu.store;
 
 import com.qingdu.common.util.CjkTokenizer;
+import com.qingdu.store.model.LibraryHit;
+import com.qingdu.store.model.LibrarySearchResult;
 import com.qingdu.store.model.SearchDocument;
 import com.qingdu.store.model.SearchHit;
 import com.qingdu.store.model.SearchResult;
@@ -13,8 +15,12 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.text.Collator;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.IntConsumer;
 
@@ -402,6 +408,240 @@ public class SearchStore {
         } catch (SQLException e) {
             throw new StoreException("全文检索失败（查询串：" + match + "）：" + e.getMessage(), e);
         }
+    }
+
+    // ==================== 跨书检索 ====================
+
+    /**
+     * 一次跨书检索最多校验多少个候选章。
+     *
+     * <p><b>为什么跨书要设这个上限，而单书不设？</b>
+     * 单书的后过滤是"整本已在内存、拿字符串 {@code contains} 一下"，
+     * 校验 1600 章和校验 16 章的代价差不多（几毫秒）。
+     * 跨书每一次校验都可能是<b>一次磁盘随机读</b>，
+     * 搜「的」这种能命中几万章的词，不设上限就是几万次随机读 ——
+     * 用户等不了，界面也会被后台任务拖住。
+     *
+     * <p>所以这里做的是<b>时间预算</b>而不是性能优化：
+     * 宁可少给结果并明确告诉用户"已截断"，也不能让一次查询跑几分钟。
+     * 上限之内集满 {@code limit} 条就停，那是 {@code limit} 管的；
+     * 这个管的是"一条都没停、但已经读了太多章"的情况。
+     */
+    public static final int DEFAULT_MAX_VERIFY = 2000;
+
+    /** 跨书检索里，一本书的章节数上限 —— 用来在 SQL 层就挡住异常数据。 */
+    private static final int CANDIDATE_CHAPTER_CAP = 200_000;
+
+    /**
+     * 在整个书库里搜一串文字。
+     *
+     * <p><b>与单书 {@link #search} 的三处不同，都是跨书特有的：</b>
+     * <ol>
+     *   <li><b>SQL 不带 {@code book_id} 过滤</b>，一次 MATCH 扫全表。
+     *       排序用 {@code ORDER BY book_id, chapter_index} ——
+     *       这样同一个 {@code bookId} 的候选章在结果里是<b>挨着的</b>，
+     *       而 {@link BookChapterTextSource} 的实现可以靠"bookId 变了就换缓存"
+     *       命中自己的缓存，不用每次都重新定位。</li>
+     *   <li><b>后过滤按需取原文</b>：绝不"把所有书都读进内存"（见
+     *       {@link BookChapterTextSource} 的类注释，那是几百 MB 的坑）。</li>
+     *   <li><b>多报两个数</b>：{@code searchedBooks} / {@code indexedBooks}，
+     *       好让界面能说清"哪些书没被搜到"（见 {@link LibrarySearchResult}）。</li>
+     * </ol>
+     *
+     * <p>⚠️ <b>零假阳性的不变量在跨书下同样成立</b>：候选从 SQL 来，
+     * 但进 {@code hits} 的每一行都过了原文精确校验。
+     *
+     * @param query    用户输入的查询串；空串或纯标点返回空结果（不抛异常）
+     * @param limit    最多返回几条；{@code <= 0} 时用 {@link #DEFAULT_LIMIT}
+     * @param source   按需取原文的回调，<b>不能为空</b>
+     * @return 结果（含分书统计与两个覆盖度数字，便于诊断与界面提示）
+     */
+    public LibrarySearchResult searchAll(String query, int limit, BookChapterTextSource source) {
+        if (source == null) {
+            throw new IllegalArgumentException("缺少原文来源，无法做精确校验");
+        }
+        String needle = query == null ? "" : query.strip();
+        long startedAt = System.nanoTime();
+        if (needle.isEmpty()) {
+            return LibrarySearchResult.empty(0, elapsedSince(startedAt));
+        }
+
+        String match = CjkTokenizer.tokenizeQuery(needle).trim();
+        if (match.isEmpty()) {
+            return LibrarySearchResult.empty(0, elapsedSince(startedAt));
+        }
+
+        ensureSchema();
+        // 先取书名映射：结果里要显示书名，而且必须在"读原文"之前就备好，
+        // 否则读到一半才发现书名拿不到，前面的读全白费。
+        Map<String, String> titles = bookTitles();
+        int indexedBooks = titles.size();
+        if (indexedBooks == 0) {
+            // 一本书都没建索引 —— 这是"用户还没搜过"的状态，不是"搜了没找到"。
+            // 报出书库总数，界面才能提示"书库里有 N 本，可以先建索引"。
+            return LibrarySearchResult.noIndexAtAll(libraryBookCount(), elapsedSince(startedAt));
+        }
+
+        List<Candidate> candidates = queryAllCandidates(match);
+        int effectiveLimit = limit <= 0 ? DEFAULT_LIMIT : limit;
+
+        List<LibraryHit> hits = new ArrayList<>();
+        Map<String, Integer> hitsByBook = new LinkedHashMap<>();
+        java.util.Set<String> verifiedBooks = new java.util.LinkedHashSet<>();
+        boolean truncated = false;
+        int verified = 0;
+
+        // 候选已按 (book_id, chapter_index) 排序，所以同一本书是连续的 ——
+        // 这正是 BookChapterTextSource 实现能靠"书变了就换缓存"的前提。
+        for (Candidate candidate : candidates) {
+            if (hits.size() >= effectiveLimit) {
+                truncated = true;
+                break;
+            }
+            if (verified >= DEFAULT_MAX_VERIFY) {
+                // 时间预算用完：明确标记为截断，不能假装"就这些了"
+                truncated = true;
+                break;
+            }
+            verified++;
+            // 记在"取原文之前"：即使这本书的原文取不到（比如文件被移走），
+            // 它也已经参与过这次检索了，覆盖度要算进去
+            verifiedBooks.add(candidate.bookId());
+            String raw = source.textOf(candidate.bookId(), candidate.chapterIndex());
+            if (raw == null || raw.isEmpty()) {
+                continue;
+            }
+            int first = indexOfIgnoreCase(raw, needle);
+            if (first < 0) {
+                continue; // 假阳性：token 都有，但原文里没有这串字
+            }
+            hits.add(new LibraryHit(candidate.bookId(),
+                    titles.getOrDefault(candidate.bookId(), "（未知书名）"),
+                    candidate.chapterIndex(),
+                    countOccurrences(raw, needle),
+                    snippet(raw, needle, first)));
+            hitsByBook.merge(candidate.bookId(), 1, Integer::sum);
+        }
+
+        List<LibraryHit> ordered = orderForDisplay(hits, titles);
+        // 书库总数 ≥ 已建索引数；用 max 兜住"书被删了但索引还在"的瞬间状态
+        int libraryBooks = Math.max(libraryBookCount(), indexedBooks);
+        return new LibrarySearchResult(ordered, hitsByBook, candidates.size(),
+                libraryBooks, indexedBooks, verifiedBooks.size(), truncated, elapsedSince(startedAt));
+    }
+
+    /**
+     * 全表取候选（跨书）。
+     *
+     * <p>两条防御：
+     * <ul>
+     *   <li><b>用 {@code search_index.rowid} 做二次封顶</b>：
+     *       {@code LIMIT} 挡不住"一章正文里有一万个相同 token"这种极端情况 ——
+     *       那一条 row 就对应 20000 个候选章，一次查询能拿到几百万个 int。
+     *       加一层 rowid 上限把最坏情况钉死在 {@link #CANDIDATE_CHAPTER_CAP}。</li>
+     *   <li><b>书名映射里没有的书直接不返回</b>：索引是懒建的，
+     *       用户可能在移除书之后、{@code pruneOrphans} 跑之前就搜了一次。
+     *       那些行没有可显示的书名，返回它们只会让界面上出现"（未知书名）"的孤儿行。</li>
+     * </ul>
+     */
+    private List<Candidate> queryAllCandidates(String match) {
+        String sql = "SELECT book_id, chapter_index FROM search_index "
+                + "WHERE search_index MATCH ? "
+                + "ORDER BY book_id, chapter_index LIMIT ?";
+        List<Candidate> result = new ArrayList<>();
+        try (Connection conn = database.connection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, match);
+            ps.setLong(2, CANDIDATE_CHAPTER_CAP);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    result.add(new Candidate(rs.getString(1), rs.getInt(2)));
+                }
+            }
+            return result;
+        } catch (SQLException e) {
+            throw new StoreException("全文检索失败（查询串：" + match + "）：" + e.getMessage(), e);
+        }
+    }
+
+    /** 已建索引、且还在书库里的书 → 书名。 */
+    private Map<String, String> bookTitles() {
+        // 只 join 已建索引的书：这就是"能被搜到的书"的准确定义。
+        // 写成 LEFT JOIN 再在 Java 里过滤多一遍，SQL 直接 inner join 更省事。
+        String sql = "SELECT b.id, b.title FROM book b "
+                + "JOIN search_meta m ON m.book_id = b.id";
+        Map<String, String> titles = new LinkedHashMap<>();
+        try (Connection conn = database.connection();
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+            while (rs.next()) {
+                titles.put(rs.getString(1), rs.getString(2));
+            }
+            return titles;
+        } catch (SQLException e) {
+            throw new StoreException("读取书名失败：" + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 书库里的书总数（不管有没有建索引）。
+     *
+     * <p>存在的意义只有一个：让界面能算出"有几本书没被搜"。
+     * 没有它，零结果就只有"没找到"一种解释。
+     */
+    private int libraryBookCount() {
+        try (Connection conn = database.connection();
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM book")) {
+            return rs.next() ? rs.getInt(1) : 0;
+        } catch (SQLException e) {
+            throw new StoreException("统计图书数量失败：" + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 展示顺序：<b>按书名排，同一本书内按章号排</b>。
+     *
+     * <p>SQL 给的是 {@code book_id} 顺序（也就是 ID 的哈希顺序，对用户毫无意义），
+     * 但界面是"按书分组"的 —— 相邻的两条结果如果是同一本书，用户才看得出是分组。
+     * 所以这里按书名做一次稳定排序；稳定很重要，
+     * 否则同一本书的命中可能在两次查询间换位置。
+     *
+     * <p>🔴 <b>中文书名必须用 {@link Collator}，不能用 {@code String.compareTo}。</b>
+     * {@code compareTo} 按 Unicode 码位比，而汉字码位大致按部首排 ——
+     * 结果是「子」(U+5B50) 排在「阿」(U+963F) 前面，「星」(U+661F) 排在
+     * 「武」(U+6B66) 前面。对用户来说这就是<b>随机顺序</b>：
+     * 他按拼音找「阿澜」，列表里却翻不到。
+     * {@link Collator} 带 {@link Locale#CHINA} 走的是拼音序，
+     * 实测「阿澜书 沧澜录 斗破苍穹 武动乾坤 星尘纪 子羽书」——
+     * 这才是中文用户心里的顺序。
+     *
+     * <p>书名相同的不同书（下载了两份同名文件）会挨在一起，这反而是对的 ——
+     * 它们在界面上本来就像同一本书。
+     */
+    private static List<LibraryHit> orderForDisplay(List<LibraryHit> hits, Map<String, String> titles) {
+        // 每次现建一个 Collator：它不是线程安全的，而这里是最简单的用法
+        //（方法内私有、无跨方法持有），不值得为它引入 ThreadLocal。
+        Collator collator = Collator.getInstance(Locale.CHINA);
+        List<LibraryHit> sorted = new ArrayList<>(hits);
+        sorted.sort((a, b) -> {
+            int byTitle = collator.compare(titles.getOrDefault(a.bookKey(), a.bookTitle()),
+                    titles.getOrDefault(b.bookKey(), b.bookTitle()));
+            if (byTitle != 0) {
+                return byTitle;
+            }
+            int byId = a.bookKey().compareTo(b.bookKey());
+            return byId != 0 ? byId : Integer.compare(a.chapterIndex(), b.chapterIndex());
+        });
+        return sorted;
+    }
+
+    private static long elapsedSince(long startedAtNanos) {
+        return (System.nanoTime() - startedAtNanos) / 1_000_000L;
+    }
+
+    /** 候选：(哪本书, 第几章)。 */
+    private record Candidate(String bookId, int chapterIndex) {
     }
 
     // ==================== 文本处理：后过滤与摘要 ====================

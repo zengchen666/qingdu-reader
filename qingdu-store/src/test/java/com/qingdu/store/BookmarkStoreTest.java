@@ -139,4 +139,96 @@ class BookmarkStoreTest {
         assertTrue(bookmark.summary().contains("第二章 远行"));
         assertTrue(bookmark.summary().contains("43%"));
     }
+
+    // ==================== 备注 ====================
+
+    @Test
+    @DisplayName("改备注后能读回来")
+    void updateNotePersists() {
+        Bookmark created = bookmarks.add(
+                Bookmark.newOne(BOOK_ID, 1, "第一章", 0.1, "旧备注"));
+
+        assertTrue(bookmarks.updateNote(created.id(), "这里埋了伏笔"));
+
+        assertEquals("这里埋了伏笔", bookmarks.list(BOOK_ID).get(0).note());
+    }
+
+    @Test
+    @DisplayName("改备注不动位置和时间（只该改那一个字段）")
+    void updateNoteKeepsOtherFields() {
+        Bookmark created = bookmarks.add(
+                Bookmark.newOne(BOOK_ID, 3, "第三章 夜谈", 0.62, null));
+
+        bookmarks.updateNote(created.id(), "记得回来");
+
+        Bookmark after = bookmarks.list(BOOK_ID).get(0);
+        assertEquals(3, after.chapterIndex());
+        assertEquals("第三章 夜谈", after.chapterTitle());
+        assertEquals(0.62, after.scrollRatio(), 1e-9);
+        assertEquals(created.createdAt(), after.createdAt());
+    }
+
+    @Test
+    @DisplayName("清空备注是合法操作（用户会想做这件事）")
+    void noteCanBeCleared() {
+        Bookmark created = bookmarks.add(
+                Bookmark.newOne(BOOK_ID, 1, "第一章", 0.1, "要删掉的备注"));
+
+        assertTrue(bookmarks.updateNote(created.id(), ""));
+
+        String note = bookmarks.list(BOOK_ID).get(0).note();
+        assertTrue(note == null || note.isEmpty(), "实际=" + note);
+    }
+
+    @Test
+    @DisplayName("备注里的首尾空白被去掉")
+    void noteIsStripped() {
+        Bookmark created = bookmarks.add(
+                Bookmark.newOne(BOOK_ID, 1, "第一章", 0.1, null));
+
+        bookmarks.updateNote(created.id(), "  这里是重点  \n");
+
+        assertEquals("这里是重点", bookmarks.list(BOOK_ID).get(0).note());
+    }
+
+    @Test
+    @DisplayName("传 null 备注等于清空，不会抛异常（note 列是 NOT NULL）")
+    void nullNoteBecomesEmpty() {
+        Bookmark created = bookmarks.add(
+                Bookmark.newOne(BOOK_ID, 1, "第一章", 0.1, "原备注"));
+
+        assertTrue(bookmarks.updateNote(created.id(), null));
+
+        String note = bookmarks.list(BOOK_ID).get(0).note();
+        assertTrue(note == null || note.isEmpty());
+    }
+
+    @Test
+    @DisplayName("改不存在的书签返回 false，不报错")
+    void updateMissingBookmarkReturnsFalse() {
+        assertFalse(bookmarks.updateNote(999_999L, "随便写"));
+    }
+
+    @Test
+    @DisplayName("备注可以写很长（不截断）")
+    void longNoteIsKept() {
+        Bookmark created = bookmarks.add(
+                Bookmark.newOne(BOOK_ID, 1, "第一章", 0.1, null));
+        String longNote = "伏笔".repeat(500);
+
+        bookmarks.updateNote(created.id(), longNote);
+
+        assertEquals(longNote, bookmarks.list(BOOK_ID).get(0).note());
+    }
+
+    @Test
+    @DisplayName("多行备注原样保留")
+    void multilineNoteIsKept() {
+        Bookmark created = bookmarks.add(
+                Bookmark.newOne(BOOK_ID, 1, "第一章", 0.1, null));
+
+        bookmarks.updateNote(created.id(), "第一行\n第二行");
+
+        assertEquals("第一行\n第二行", bookmarks.list(BOOK_ID).get(0).note());
+    }
 }

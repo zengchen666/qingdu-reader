@@ -129,6 +129,34 @@ public class BookmarkStore {
         }
     }
 
+    /**
+     * 改一条书签的备注。
+     *
+     * <p>🔴 <b>为什么必须有这个方法，而不是"删了重加"？</b>
+     * {@code bookmark.id} 是自增主键，"删了重加"会换一个新 ID。
+     * 表面上没影响（书签没有外键指向它），但有一个真实的问题：
+     * 用户在备注里写下的东西是<b>他花时间产出的内容</b>，
+     * 一次失败的写入就意味着它没了。
+     * 而 {@code UPDATE} 只改一个字段，失败就是失败，不会"改到一半"。
+     *
+     * <p>空白备注归一化成空串（不是 null）：{@code note} 列是 {@code NOT NULL}，
+     * 而"清空备注"是用户会做的正常操作，不能因此报错。
+     *
+     * @return 有没有真的改动（备注没变返回 false，界面就不用白刷新一次）
+     */
+    public boolean updateNote(long bookmarkId, String note) {
+        String normalized = (note == null) ? "" : note.strip();
+        try (Connection conn = database.connection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "UPDATE bookmark SET note = ? WHERE id = ?")) {
+            ps.setString(1, normalized);
+            ps.setLong(2, bookmarkId);
+            return ps.executeUpdate() > 0;
+        } catch (SQLException e) {
+            throw new StoreException("修改书签备注失败：" + e.getMessage(), e);
+        }
+    }
+
     public int count(String bookId) {
         try (Connection conn = database.connection();
              PreparedStatement ps = conn.prepareStatement(
