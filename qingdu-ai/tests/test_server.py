@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from qingdu_ai import __version__
 from qingdu_ai.server import create_app
 
 from conftest import make_settings
@@ -31,7 +32,7 @@ class TestHealth:
         body = r.json()
         assert body["ok"] is True
         assert body["llm"] == "ready"
-        assert body["version"] == "0.4.0"
+        assert body["version"] == __version__
 
     def test_no_api_key(self, no_key_client):
         r = no_key_client.get("/api/health")

@@ -31,10 +31,10 @@ param(
 
     # 版本号，会写进程序元数据。
     # 注意：这里是硬编码的，改版本号必须同步改这里 —— app\ 里的 jar 名带的是
-    # Maven 的 POM 版本（0.4.0-SNAPSHOT），而 exe / zip 名字带的是这里的 $Version，
+    # Maven 的 POM 版本（0.4.1-SNAPSHOT），而 exe / zip 名字带的是这里的 $Version，
     # 两边不一致会出现"jar 是新代码、exe 显示的还是老版本"的错觉。
     # 第三处是 ReaderView.VERSION —— 用户点「帮助 → 关于」时看到的那个数字。
-    [string] $Version = "0.4.0",
+    [string] $Version = "0.4.1",
 
     # 跳过 Maven 构建，直接复用上一次的 jar（改完代码要重新打包时不要加这个）。
     [switch] $SkipBuild
@@ -173,7 +173,7 @@ function Remove-BuildPath {
 # ---------------------------------------------------------------------
 if (-not $SkipBuild) {
     Write-Host ""
-    Write-Host "==> [1/4] Maven 打包各模块..."
+    Write-Host "==> [1/5] Maven 打包各模块..."
     # 这里用 install 而不是 package，是为了把本项目的 qingdu-common / qingdu-core /
     # qingdu-store 也发布进本地仓库。原因在第 2 步：收集依赖是**另一个 Maven 会话**
     # （只带 qingdu-desktop 一个模块），它从本地仓库解析同项目的兄弟模块。
@@ -188,7 +188,7 @@ if (-not $SkipBuild) {
 }
 
 Write-Host ""
-Write-Host "==> [2/4] 收集运行时依赖并分流（app 走 classpath，JavaFX 走 module-path）..."
+Write-Host "==> [2/5] 收集运行时依赖并分流（app 走 classpath，JavaFX 走 module-path）..."
 
 # 每次重建都清空，否则上一轮删掉的依赖会一直留在包里（经典的"幽灵依赖"问题）
 Remove-BuildPath $StageDir
@@ -258,7 +258,7 @@ Write-Host "    module-path: $fxJarCount 个 JavaFX 模块 jar"
 # 第 3 步：用 jdeps 算出需要的 JDK 模块
 # ---------------------------------------------------------------------
 Write-Host ""
-Write-Host "==> [3/4] 用 jdeps 分析依赖的 JDK 模块..."
+Write-Host "==> [3/5] 用 jdeps 分析依赖的 JDK 模块..."
 
 # jdeps 要看到全部 jar（自己的 + JavaFX 的），否则推算出的 JDK 模块会偏少
 $jarPaths = @(
@@ -342,7 +342,7 @@ if ($null -ne $moduleList) {
 # 第 4 步：jpackage
 # ---------------------------------------------------------------------
 Write-Host ""
-Write-Host "==> [4/4] 生成免安装程序..."
+Write-Host "==> [4/5] 生成免安装程序..."
 
 Remove-BuildPath $AppDir
 New-Item -ItemType Directory -Path $DistDir -Force | Out-Null
@@ -378,6 +378,60 @@ Invoke-Native -What "jpackage" -Action {
 }
 
 # ---------------------------------------------------------------------
+# 第 5 步：把 AI 服务源码拷进绿色版
+# ---------------------------------------------------------------------
+# 🔴 为什么只拷源码、不拷 .venv
+#   .venv 里全是写死的绝对路径（ Scripts\*.exe 的shebang、pyvenv.cfg 的 home、
+#   site-packages 里 .pth 记录的路径）。拷到别人的机器上必然指向不存在的
+#   Python，表现为"装过了但还是ModuleNotFoundError"—— 比不装更难排查。
+#   所以 venv 属于"每台机器各建一次"，不属于可分发的产物。
+#
+# 为什么必须拷：AI 面板在服务没起时会提示"请在 qingdu-ai 目录执行 ……"。
+#   如果绿色版里没有这个目录，那条提示指向一个不存在的地方 —— 用户只会
+#   怀疑程序坏了。至少让路径是真的，剩下两条命令（建venv、pip install）
+#   本来也必须用户自己在自己机器上敲。
+$AiSrcDir = Join-Path $Root "qingdu-ai"
+if (Test-Path -LiteralPath $AiSrcDir) {
+    $AiDestDir = Join-Path $AppDir "qingdu-ai"
+    if (Test-Path -LiteralPath $AiDestDir) {
+        [IO.Directory]::Delete($AiDestDir, $true)
+    }
+    New-Item -ItemType Directory -Path $AiDestDir -Force | Out-Null
+
+    # 要排除的四样：
+    #   .venv       —— 内部全是本机绝对路径，拷过去必然失效（见上）
+    #   __pycache__ —— 本机 .pyc 残留，与源码版本可能对不上
+    #   .pytest_cache —— 本机跑测试的缓存，用户用不上
+    #   *.egg-info  —— 🔴 pip install -e 生成的产物，里面记着**打包那一刻**
+    #                 的版本与文件清单。用户在自己机器上重新 install 时，
+    #                 残留的旧 egg-info 可能让 setuptools 拿到过期信息，
+    #                 于是 /api/health 报出一个对不上的版本号。
+    Get-ChildItem -LiteralPath $AiSrcDir -Recurse -File -Force |
+        Where-Object { $_.FullName -notmatch '[\\/]\.venv[\\/]' -and
+                       $_.FullName -notmatch '[\\/]__pycache__[\\/]' -and
+                       $_.FullName -notmatch '[\\/]\.pytest_cache[\\/]' -and
+                       $_.FullName -notmatch '[\\/][^\\/]+\.egg-info[\\/]' -and
+                       $_.Extension -ne '.pyc' } |
+        ForEach-Object {
+            $rel = $_.FullName.Substring($AiSrcDir.Length).TrimStart('\', '/')
+            $target = Join-Path $AiDestDir $rel
+            # 🔴 Split-Path 对"没有子目录"的路径返回空串，
+            # 直接喂给 New-Item -Path 会报"参数 Path 是空值"。
+            $parent = Split-Path -Parent $target
+            if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+                New-Item -ItemType Directory -Path $parent -Force | Out-Null
+            }
+            Copy-Item -LiteralPath $_.FullName -Destination $target -Force
+        }
+    $aiCount = (Get-ChildItem -LiteralPath $AiDestDir -Recurse -File).Count
+    Write-Host ""
+    Write-Host "==> [5/5] AI 服务源码已拷入（$aiCount 个文件，不含 .venv /缓存 / egg-info）"
+} else {
+    Write-Host ""
+    Write-Host "==> [5/5] 警告：找不到 qingdu-ai 目录，绿色版将不带 AI 服务源码"
+}
+
+# ---------------------------------------------------------------------
 # 结果
 # ---------------------------------------------------------------------
 $exePath = Join-Path $AppDir "$AppName.exe"
@@ -391,3 +445,9 @@ Write-Host "    整包大小: $sizeMb MB"
 Write-Host ""
 Write-Host "    把整个 $AppName 文件夹拷给别人，对方双击 $AppName.exe 就能用，"
 Write-Host "    不需要安装 JDK 或配置任何环境变量。"
+Write-Host ""
+Write-Host "    AI 问答应另外起一个服务（首次需装 Python 依赖，见 qingdu-ai\README.md）："
+Write-Host "      cd $AppName\qingdu-ai"
+Write-Host "      python -m venv .venv"
+Write-Host "      .\.venv\Scripts\python.exe -m pip install -e ""[dev]"""
+Write-Host "      .\.venv\Scripts\python.exe -m qingdu_ai"

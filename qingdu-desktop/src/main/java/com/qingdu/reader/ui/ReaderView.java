@@ -137,12 +137,15 @@ public class ReaderView extends BorderPane {
      *       cfg 里的 {@code -Djpackage.app-version} 和 zip 的文件名；</li>
      *   <li>这里 —— 决定用户点「帮助 → 关于」时看到的数字。</li>
      * </ul>
-     * 三处不一致的后果很难看：exe 属性里写着 0.4.0，点开「关于」却是 0.3.0。
+     * 三处不一致的后果很难看：exe 属性里写着 0.4.1，点开「关于」却是 0.4.0。
+     * 升版时除了这三处，<b>还要记得 Python 侧的 {@code qingdu_ai/__init__.py}
+     * 里的 {@code __version__}</b> —— 它会通过 {@code /api/health} 上报给轻读，
+     * 漏改会出现"轻读说0.4.1、服务说 0.4.0"这种自相矛盾。
      * 之所以不写成自动读取（{@code getPackage().getImplementationVersion()}），
      * 是因为开发模式下（{@code mvn javafx:run}）它恒为 null ——
      * 那样"关于"里就会显示一串 {@code null}，比手写一个常量更糟。
      */
-    public static final String VERSION = "0.4.0";
+    public static final String VERSION = "0.4.1";
 
     /** 「最近打开」菜单最多列几本。 */
     private static final int RECENT_LIMIT = 12;

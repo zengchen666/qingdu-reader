@@ -224,7 +224,7 @@ public final class AiE2eProbe {
     private static void bindEphemeral(HttpServer server,
                                       List<Map<String, Object>> requests) throws IOException {
         server.createContext("/api/health", ex -> respond(ex, 200, """
-                {"ok":true,"llm":"ready","version":"0.4.0"}"""));
+                {"ok":true,"llm":"ready","version":"x"}"""));
         server.createContext("/api/ask", ex -> {
             Map<String, Object> req = Json.parseObject(
                     new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));

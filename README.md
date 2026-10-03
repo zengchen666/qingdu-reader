@@ -137,6 +137,34 @@ $env:QINGDU_LLM_API_KEY = "sk-你的key"; $env:QINGDU_LLM_MODEL = "deepseek-chat
 轻读会自动探测 `127.0.0.1:8000`。**探测不到就禁用 AI 入口并给出明确提示**，
 不会让界面因为服务没起而卡住。
 
+> **🔴 用绿色版（免安装 zip）的看这里。**
+>
+> 绿色版解压后长这样，AI 服务的源码就在里面：
+>
+> ```
+> QingduReader\
+> ├── QingduReader.exe
+> ├── app\  runtime\
+> └── qingdu-ai\        ← AI 服务源码（14 个文件）
+> ```
+>
+> 所以命令是在**解压出来的目录**里敲，不是仓库里：
+>
+> ```powershell
+> cd QingduReader\qingdu-ai
+> python -m venv .venv
+> .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+> .\.venv\Scripts\python.exe -m qingdu_ai
+> ```
+>
+> **包里带了源码，但不带 `.venv`。** 因为 venv 内部全是写死的本机绝对路径
+> （`pyvenv.cfg` 的 `home`、`Scripts\*.exe` 的启动器、`site-packages\*.pth`），
+> 拷到别人机器上会去找一个不存在的 Python，表现为"我明明装过了"但依然报
+> `ModuleNotFoundError` —— 比干脆不装更难排查。所以 venv 只能每台机器各建一次。
+>
+> 代价是首次多两条命令、且需要联网装依赖。换来的是**解压即用，不需要 JDK、
+> 不需要预装 Python**。阅读功能本身完全不需要这些 —— 不装 AI 也能正常读书。
+
 ### 格式与扩展
 
 | 特性 | 说明 | 状态 |
@@ -1062,7 +1090,7 @@ java --module-path qingdu-desktop\target\package-stage\fx ^
 | 2.2 | AI 问答：**双进程 RAG —— 问句提取检索词 + FTS5 召回 + 段落切片段 + 大模型作答 + 引用可核对（v0.4）** | **已完成** |
 | 3 | 沉浸体验：全屏阅读、自动滚动、行距 / 双栏 | 计划中 |
 | 4 | EPUB 支持：epub4j 解析、统一章节模型落地、图片处理 | 计划中 |
-| 5 | 打包发布：jlink + jpackage、GitHub Release | **已完成（绿色版 + [v0.1.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.1.0) / [v0.1.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.1.1) / [v0.2.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.2.0) / [v0.2.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.2.1) / [v0.3.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.3.0) / [v0.4.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.4.0) Release；`.msi` 安装包待做）** |
+| 5 | 打包发布：jlink + jpackage、GitHub Release | **已完成（绿色版 + [v0.1.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.1.0) / [v0.1.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.1.1) / [v0.2.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.2.0) / [v0.2.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.2.1) / [v0.3.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.3.0) / [v0.4.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.4.0) / [v0.4.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.4.1) Release；`.msi` 安装包待做）** |
 | 5.1 | AI 增强：向量检索 + rerank、流式输出、多轮追问 | 计划中（v0.5） |
 | 6 | 云端同步：Spring Boot 服务、账号、进度同步 | 远期 |
 | 7 | 扩展：听书、更多格式 | 远期 |

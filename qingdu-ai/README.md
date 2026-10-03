@@ -24,6 +24,10 @@
 
 ## 快速开始
 
+> **用绿色版（免安装 zip）的看这里**：解压后 `QingduReader\qingdu-ai\` 就是本目录，
+> 命令照下面敲，只是路径不同。**每个新机器都要从第1 步开始** —— 包里带了源码，
+> 但**不带 `.venv`**，原因见下面「为什么绿色版不带 .venv」。
+
 ```powershell
 cd qingdu-reader\qingdu-ai
 
@@ -41,6 +45,21 @@ $env:QINGDU_LLM_MODEL    = "deepseek-chat"
 ```
 
 看到 `http://127.0.0.1:8000` 就成了。轻读会自动探测这个端口。
+
+### 为什么绿色版不带 `.venv`
+
+因为 **venv 不能搬家**。它内部全是写死的本机路径：
+
+- `pyvenv.cfg` 里的 `home` 指向建venv 时用的那个 Python；
+- `Scripts\*.exe` 的启动器里烧进了绝对路径；
+- `site-packages\*.pth` 记录的是本机的 site-packages 位置。
+
+把别人的 `.venv` 拷到自己机器上，它会去找一个不存在的 Python，于是
+**"我明明装过了"但依然报`ModuleNotFoundError`** —— 比干脆不装更难排查。
+所以 venv 属于"每台机器各建一次"，不属于能分发的产物。
+
+代价是首次使用多两条命令（建 venv + 装依赖，需要联网）。换来的是
+**绿色版解压即用，不需要预装 Python 打包方案、不需要装 JDK**。
 
 ---
 
@@ -127,7 +146,7 @@ ModuleNotFoundError: No module named 'fastapi'
 ### `GET /api/health`
 
 ```json
-{ "ok": true, "llm": "ready", "version": "0.4.0" }
+{ "ok": true, "llm": "ready", "version": "0.4.1" }
 ```
 
 `llm` 三态：`ready` / `no-api-key` / `not-configured`。

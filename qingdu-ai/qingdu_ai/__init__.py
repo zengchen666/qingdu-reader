@@ -11,6 +11,13 @@
 章节字节偏移；让 Python 重实现一遍解析引擎，等于把一份已验证的代码抄第二遍。
 """
 
-__version__ = "0.4.0"
+# 🔴 版本号有两份：这里的 __version__ 与 pyproject.toml 的 version。
+# 本机实测过 importlib.metadata 单一源头的写法，不可用：
+#   ① 改了 pyproject 不会自动刷新已安装的元数据（仍报旧版本）；
+#   ② 绿色版用户直接跑源码、没 pip install，importlib.metadata 会抛
+#      PackageNotFoundError —— 服务根本起不来。
+# 所以只能写死两份，升版时两处一起改。
+# （Java 侧同理，共四处：5 个 POM、package.ps1 的 $Version、ReaderView.VERSION、本文件）
+__version__ = "0.4.1"
 
 __all__ = ["__version__"]

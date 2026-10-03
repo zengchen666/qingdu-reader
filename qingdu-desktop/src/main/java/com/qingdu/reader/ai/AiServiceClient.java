@@ -79,6 +79,32 @@ public final class AiServiceClient {
             + "python -m venv .venv\n"
             + ".\\.venv\\Scripts\\python.exe -m pip install -e \".[dev]\"";
 
+    /**
+     * 「AI 服务未启动」时给用户看的完整说明。
+     *
+     * <p>🔴 <b>必须说清服务不在程序里</b>：轻读是 JavaFX 程序，AI 服务是另一个
+     * Python 进程，两者靠 HTTP 通信。绿色版里带了 {@code qingdu-ai} 源码，但
+     * <b>没有也不会带 {@code .venv}</b>（venv 内部全是绝对路径，拷到别的机器上
+     * 必然指向不存在的 Python，表现为"装过了还是 ModuleNotFoundError"，
+     * 比不装更难排查）。所以每台机器都要自己建一次 venv。
+     * 提示里若只给启动命令而不说这句，用户会以为程序自带了服务、只是没启动。
+     *
+     * <p>放在这里而不是散落在 {@code AiPanel} 的两处失败分支，是为了
+     * <b>同一件事只留一份说法</b>。原先「探测失败」和「调用失败」各写了一段
+     * 措辞，用户看到的提示随入口不同而不同，会怀疑是两个不同的问题。
+     */
+    public static final String SERVICE_DOWN_HINT =
+            "AI 服务未启动或已断开。\n"
+            + "它是另一个程序，需要你另外起一次（轻读里没有这个开关）：\n"
+            + "1. 首次使用先装依赖，只需做一次：\n"
+            + "   cd qingdu-ai\n"
+            + "   python -m venv .venv\n"
+            + "   .\\.venv\\Scripts\\python.exe -m pip install -e \".[dev]\"\n"
+            + "2. 以后每次启动，在 qingdu-ai 目录执行：\n"
+            + "   " + START_COMMAND + "\n"
+            + "（绿色版已带 qingdu-ai 源码，但不带 .venv —— 虚拟环境里全是"
+            + "本机路径，必须在你的电脑上自己建一次）";
+
     private final String baseUrl;
     private final HttpClient http;
 

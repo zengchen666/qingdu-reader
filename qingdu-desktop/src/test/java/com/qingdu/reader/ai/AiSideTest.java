@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -177,10 +178,13 @@ class AiSideTest {
 
         @Test
         void 健康_三态解析() {
+            // 🔴 version 字段这里用的是占位串，不是真实版本：
+            // 解析器只读 llm 字段，写死成"0.4.0"会让人误以为在断言版本一致，
+            // 于是每次升版都想来改这里 —— 而改它对测试没有任何意义。
             assertTrue(AiModels.parseHealth(
-                    "{\"ok\":true,\"llm\":\"ready\",\"version\":\"0.4.0\"}").ready());
+                    "{\"ok\":true,\"llm\":\"ready\",\"version\":\"x\"}").ready());
             var noKey = AiModels.parseHealth(
-                    "{\"ok\":true,\"llm\":\"no-api-key\",\"version\":\"0.4.0\"}");
+                    "{\"ok\":true,\"llm\":\"no-api-key\",\"version\":\"x\"}");
             assertFalse(noKey.ready());
             assertTrue(noKey.noApiKey());
             assertTrue(AiModels.parseHealth(
@@ -388,6 +392,60 @@ class AiSideTest {
             String hint = AiServiceClient.INSTALL_HINT;
             assertTrue(hint.contains("python -m venv .venv"), "缺建 venv 这一步：" + hint);
             assertTrue(hint.contains("pip install -e"), "缺装依赖这一步：" + hint);
+        }
+
+        @Test
+        void 服务未启动的提示必须说清服务不在程序里() {
+            // 🔴 用户实机踩过（2026-10-03）：从绿色版启动、AI 面板提示
+            // "请在 qingdu-ai 目录执行"，但解压后的目录里根本没有 qingdu-ai。
+            // 于是那条命令指向一个不存在的地方，用户只会怀疑程序坏了。
+            //
+            // 这里钉住三件事：① 明确说"它是另一个程序"，
+            // ② 把装依赖与启动两条命令都写全（顺序不能反），
+            // ③ 说清为什么不自带 .venv（否则用户会去找"总开关"）。
+            String hint = AiServiceClient.SERVICE_DOWN_HINT;
+
+            assertTrue(hint.contains("另一个程序"),
+                    "必须说明服务不在轻读里，实际是：" + hint);
+
+            // 装依赖在前、启动在后：反了的话用户第一次照做就会失败
+            int venvAt = hint.indexOf("python -m venv .venv");
+            int installAt = hint.indexOf("pip install -e");
+            int startAt = hint.indexOf(AiServiceClient.START_COMMAND);
+            assertTrue(venvAt >= 0, "缺建 venv 这一步：" + hint);
+            assertTrue(installAt > venvAt, "装依赖必须排在建 venv 之后：" + hint);
+            assertTrue(startAt > installAt, "启动必须排在装依赖之后：" + hint);
+
+            assertTrue(hint.contains(".venv"),
+                    "必须解释为什么绿色版不带 .venv：" + hint);
+        }
+
+        @Test
+        void 两处服务未启动的入口必须用同一份文案() {
+            // 「探测失败」（还没问就探不到）和「调用失败」（问着问着断了）
+            // 如果各写一段，用户看到的提示随入口不同而不同，
+            // 会怀疑是两个不同的问题。
+            //
+            // 钉法：读 AiPanel 源码，确认两处分支都只引用常量、不自带文案。
+            // 字符串匹配而不是反射 —— 反射拿不到"源码里写了什么"，
+            // 而"是否内联了第二份文案"恰恰是这里要防的事。
+            java.nio.file.Path src = java.nio.file.Path.of("src", "main", "java",
+                    "com", "qingdu", "reader", "ui", "AiPanel.java");
+            java.nio.file.Path abs = java.nio.file.Files.exists(src)
+                    ? src
+                    : java.nio.file.Path.of("qingdu-desktop", "src", "main", "java",
+                            "com", "qingdu", "reader", "ui", "AiPanel.java");
+            String text = assertDoesNotThrow(
+                    () -> java.nio.file.Files.readString(abs, java.nio.charset.StandardCharsets.UTF_8),
+                    "读不到 AiPanel.java，无法校验提示文案：" + abs);
+
+            int refs = text.split("AiServiceClient\\.SERVICE_DOWN_HINT", -1).length - 1;
+            assertEquals(2, refs,
+                    "SERVICE_DOWN_HINT 应恰好被引用两次（探测失败 / 调用失败），实际 " + refs);
+
+            // 反向检查：不能还留着旧的内联文案
+            assertFalse(text.contains("请在 qingdu-ai 目录执行"),
+                    "AiPanel 里不该再有内联的启动提示文案，两处都该用常量");
         }
     }
 }
