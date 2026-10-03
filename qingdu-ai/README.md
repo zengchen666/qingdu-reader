@@ -46,7 +46,7 @@ notepad .env          # 把 QINGDU_LLM_API_KEY 改成自己的
 看到这样的启动提示就成了：
 
 ```
-轻读 AI 服务 v0.4.1  http://127.0.0.1:8000
+轻读 AI 服务 v0.4.2  http://127.0.0.1:8000
   配置：C:\...\qingdu-ai\.env
         （API key 从该文件读取）
   模型：deepseek-chat  (https://api.deepseek.com/v1)
@@ -190,7 +190,7 @@ ModuleNotFoundError: No module named 'fastapi'
 ### `GET /api/health`
 
 ```json
-{ "ok": true, "llm": "ready", "version": "0.4.1" }
+{ "ok": true, "llm": "ready", "version": "0.4.2" }
 ```
 
 `llm` 三态：`ready` / `no-api-key` / `not-configured`。

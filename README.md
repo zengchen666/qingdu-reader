@@ -1105,7 +1105,7 @@ java --module-path qingdu-desktop\target\package-stage\fx ^
 | 2.2 | AI 问答：**双进程 RAG —— 问句提取检索词 + FTS5 召回 + 段落切片段 + 大模型作答 + 引用可核对（v0.4）** | **已完成** |
 | 3 | 沉浸体验：全屏阅读、自动滚动、行距 / 双栏 | 计划中 |
 | 4 | EPUB 支持：epub4j 解析、统一章节模型落地、图片处理 | 计划中 |
-| 5 | 打包发布：jlink + jpackage、GitHub Release | **已完成（绿色版 + [v0.1.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.1.0) / [v0.1.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.1.1) / [v0.2.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.2.0) / [v0.2.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.2.1) / [v0.3.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.3.0) / [v0.4.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.4.0) / [v0.4.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.4.1) Release；`.msi` 安装包待做）** |
+| 5 | 打包发布：jlink + jpackage、GitHub Release | **已完成（绿色版 + [v0.1.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.1.0) / [v0.1.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.1.1) / [v0.2.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.2.0) / [v0.2.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.2.1) / [v0.3.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.3.0) / [v0.4.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.4.0) / [v0.4.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.4.1) / [v0.4.2](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.4.2) Release；`.msi` 安装包待做）** |
 | 5.1 | AI 增强：向量检索 + rerank、流式输出、多轮追问 | 计划中（v0.5） |
 | 6 | 云端同步：Spring Boot 服务、账号、进度同步 | 远期 |
 | 7 | 扩展：听书、更多格式 | 远期 |
