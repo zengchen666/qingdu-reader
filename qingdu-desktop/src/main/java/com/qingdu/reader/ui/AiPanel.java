@@ -25,7 +25,6 @@ import javafx.scene.layout.VBox;
 
 import java.util.List;
 import java.util.TreeMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * AI 问答面板 —— 基于原文的问答，答案带可点击的引用。
@@ -115,8 +114,15 @@ public final class AiPanel extends VBox {
     private final TitledPane citationPane = new TitledPane("引用出处", citationList);
     private final Button recheckButton = new Button("重新检测服务");
 
-    /** 防止重复提问：连点会并发发出多个请求，答案会乱序覆盖。 */
-    private final AtomicBoolean busy = new AtomicBoolean(false);
+    /**
+     * 防止重复提问：连点会并发发出多个请求，答案会乱序覆盖。
+     *
+     * <p>🔴 状态放在 {@link AskGate} 里而不是写成本类的一个布尔字段：
+     * 曾经这里是一个 {@code AtomicBoolean busy}，而 {@code setBusy(boolean busy)}
+     * 的**参数把字段遮蔽了**，于是"结束"只更新了界面、没复位状态 ——
+     * 表现为「只能提问一次，第二次点了没反应」。见 {@link AskGate} 的类注释。
+     */
+    private final AskGate gate = new AskGate();
 
     /** 服务是否可用。false 时输入与提问按钮置灰。 */
     private volatile boolean serviceReady;
@@ -275,17 +281,19 @@ public final class AiPanel extends VBox {
     // ==================== 提问 ====================
 
     private void onAsk() {
-        if (!serviceReady || !busy.compareAndSet(false, true)) {
+        if (!serviceReady || !gate.begin()) {
             return;
         }
         String question = input.getText() == null ? "" : input.getText().trim();
         if (question.isEmpty()) {
-            setBusy(false);
+            // 🔴 这里是**已经抢到闸门之后**的提前返回，必须走 finishAsk() 释放，
+            // 否则下一次点击会被 gate 挡掉 —— 用户看到的就是"点不动了"。
+            finishAsk();
             return;
         }
         Book book = host.currentBook();
         if (book == null) {
-            setBusy(false);
+            finishAsk();
             setWarn("请先打开一本书。");
             return;
         }
@@ -296,10 +304,19 @@ public final class AiPanel extends VBox {
 
         // 切片段与检索都在后台线程：读章要碰磁盘，不能卡 UI
         Thread worker = new Thread(() -> {
-            List<AiModels.Chunk> chunks = buildChunks(book, question);
+            List<AiModels.Chunk> chunks;
+            try {
+                chunks = buildChunks(book, question);
+            } catch (Throwable t) {
+                // 🔴 兜底：连 Error 也吃掉。buildChunks 内部已经兜了 RuntimeException，
+                // 但漏网的任何东西一旦让这个线程死掉，闸门就永远不释放 ——
+                // 后果是"提问一次之后功能就废了"，比这一次答不上来严重得多。
+                chunks = List.of();
+            }
+            List<AiModels.Chunk> built = chunks;
             Platform.runLater(() -> {
-                if (chunks.isEmpty()) {
-                    setBusy(false);
+                if (built.isEmpty()) {
+                    finishAsk();
                     // 🔴 措辞要区分"没索引"与"召不回"，不能一律说"请建立索引"。
                     // 真机上就踩过这个：用户明明建了索引，却被反复引导去重建，
                     // 而真实原因是长问句在 FTS 的 AND 语义下召不回
@@ -311,7 +328,7 @@ public final class AiPanel extends VBox {
                             + "或先确认这本书已建立全文索引。");
                     return;
                 }
-                callService(question, chunks, List.of(book.id()));
+                callService(question, built, List.of(book.id()));
             });
         }, "ai-chunk-build");
         worker.setDaemon(true);
@@ -398,15 +415,25 @@ public final class AiPanel extends VBox {
 
     private void callService(String question, List<AiModels.Chunk> chunks, List<String> bookIds) {
         Thread t = new Thread(() -> {
-            AskOutcome outcome = client.ask(question, chunks, bookIds, DEFAULT_TOP_K);
-            Platform.runLater(() -> applyOutcome(outcome, chunks.size()));
+            try {
+                AskOutcome outcome = client.ask(question, chunks, bookIds, DEFAULT_TOP_K);
+                Platform.runLater(() -> applyOutcome(outcome, chunks.size()));
+            } catch (Throwable e) {
+                // 🔴 兜底同上：这个线程一旦没走到收尾，闸门就永远不释放。
+                // client.ask 自身承诺不抛异常，但 applyOutcome 里读结果的部分
+                // 仍可能因为服务端返回了意外结构而炸 —— 那不该让整个功能废掉。
+                Platform.runLater(() -> {
+                    finishAsk();
+                    setWarn("AI 调用失败。");
+                });
+            }
         }, "ai-ask");
         t.setDaemon(true);
         t.start();
     }
 
     private void applyOutcome(AskOutcome outcome, int sentChunks) {
-        setBusy(false);
+        finishAsk();
         if (!outcome.ok()) {
             applyFailure(outcome.failure());
             return;
@@ -483,13 +510,42 @@ public final class AiPanel extends VBox {
         askButton.setDisable(!enabled);
     }
 
-    private void setBusy(boolean busy) {
-        progress.setVisible(busy);
-        progress.setManaged(busy);
-        if (busy) {
+    /**
+     * 更新"忙"的界面表现。
+     *
+     * <p>🔴 参数名不能叫 {@code busy} —— 原来就是这么写的，
+     * 而本类里曾经有个同名字段，被参数**完全遮蔽**：
+     * {@code setBusy(false)} 只改了界面、没复位状态，
+     * 于是「只能提问一次，第二次点了没反应」（见 {@link AskGate} 的类注释）。
+     * 参数改叫 {@code value}，把这个陷阱从语法上堵死。
+     *
+     * <p>🔴 按钮禁用要同时看 {@code value} 和 {@code gate}，缺一不可：
+     * <ul>
+     *   <li>只看 {@code value}：探测服务健康也会调 {@code setBusy(false)}，
+     *       问答还在进行时按钮会被"探测"顺手解禁 —— 用户点下去是死点击。</li>
+     *   <li>只看 {@code gate}：探测健康期间（{@code value=true}）按钮却可点，
+     *       那时服务状态还没确认，点了多半直接失败。</li>
+     * </ul>
+     */
+    private void setBusy(boolean value) {
+        progress.setVisible(value);
+        progress.setManaged(value);
+        if (value) {
             progress.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
         }
-        askButton.setDisable(busy || !serviceReady);
+        askButton.setDisable(value || gate.isBusy() || !serviceReady);
+    }
+
+    /**
+     * 一次问答的**唯一收尾口**。
+     *
+     * <p>成功、失败、召不回、空问题、没打开书 —— 所有退出路径都走这里，
+     * 理由见 {@link AskGate}：漏掉 {@code end()} 的后果是功能永久不可用。
+     * 集中成一个方法，才能让"有没有漏"这件事一眼看得出来。
+     */
+    private void finishAsk() {
+        gate.end();
+        setBusy(false);
     }
 
     private void setWarn(String text) {
