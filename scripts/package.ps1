@@ -398,20 +398,36 @@ if (Test-Path -LiteralPath $AiSrcDir) {
     }
     New-Item -ItemType Directory -Path $AiDestDir -Force | Out-Null
 
-    # 要排除的四样：
+    # 要排除的五样：
+    #   🔴 .env      —— **里面是真实的 API key**。不排除的话，你本机的 key
+    #                  会被打进 zip 并随 Release 公开上传。这是本清单里
+    #                  唯一"漏了就会造成真实损失"的一项，见下面那道断言。
     #   .venv       —— 内部全是本机绝对路径，拷过去必然失效（见上）
     #   __pycache__ —— 本机 .pyc 残留，与源码版本可能对不上
     #   .pytest_cache —— 本机跑测试的缓存，用户用不上
-    #   *.egg-info  —— 🔴 pip install -e 生成的产物，里面记着**打包那一刻**
-    #                 的版本与文件清单。用户在自己机器上重新 install 时，
-    #                 残留的旧 egg-info 可能让 setuptools 拿到过期信息，
-    #                 于是 /api/health 报出一个对不上的版本号。
+    #   *.egg-info  —— pip install -e 生成的产物，里面记着**打包那一刻**
+    #                  的版本与文件清单。用户在自己机器上重新 install 时，
+    #                  残留的旧 egg-info 可能让 setuptools 拿到过期信息，
+    #                  于是 /api/health 报出一个对不上的版本号。
+    # 注意 .env.example **不能排除** —— 它是给用户的模板，正是要发出去的东西。
+    $aiExclude = @(
+        '[\\/]\.venv[\\/]',
+        '[\\/]__pycache__[\\/]',
+        '[\\/]\.pytest_cache[\\/]',
+        '[\\/][^\\/]+\.egg-info[\\/]'
+    )
     Get-ChildItem -LiteralPath $AiSrcDir -Recurse -File -Force |
-        Where-Object { $_.FullName -notmatch '[\\/]\.venv[\\/]' -and
-                       $_.FullName -notmatch '[\\/]__pycache__[\\/]' -and
-                       $_.FullName -notmatch '[\\/]\.pytest_cache[\\/]' -and
-                       $_.FullName -notmatch '[\\/][^\\/]+\.egg-info[\\/]' -and
-                       $_.Extension -ne '.pyc' } |
+        Where-Object {
+            $rel = $_.FullName.Substring($AiSrcDir.Length).TrimStart('\', '/')
+            # .env 只按"相对根目录正好是 .env"排除，
+            # 不能用正则匹配名字 —— 否则 .env.example 会被一起干掉。
+            if ($rel -eq '.env') { return $false }
+            foreach ($pat in $aiExclude) {
+                if ($_.FullName -match $pat) { return $false }
+            }
+            if ($_.Extension -eq '.pyc') { return $false }
+            return $true
+        } |
         ForEach-Object {
             $rel = $_.FullName.Substring($AiSrcDir.Length).TrimStart('\', '/')
             $target = Join-Path $AiDestDir $rel
@@ -425,7 +441,45 @@ if (Test-Path -LiteralPath $AiSrcDir) {
         }
     $aiCount = (Get-ChildItem -LiteralPath $AiDestDir -Recurse -File).Count
     Write-Host ""
-    Write-Host "==> [5/5] AI 服务源码已拷入（$aiCount 个文件，不含 .venv /缓存 / egg-info）"
+    Write-Host "==> [5/5] AI 服务源码已拷入（$aiCount 个文件，不含 .env / .venv / 缓存 / egg-info）"
+
+    # -----------------------------------------------------------------
+    # 🔴 发布前的密钥检查 —— **宁可打包失败，也不能把 key 发出去**
+    # -----------------------------------------------------------------
+    # 上面那个过滤清单是"我认为该排除什么"；这里是不依赖那份判断的兜底：
+    # 直接扫整个产物，只要出现 .env 或者像真 key 的字符串，就中止打包。
+    # 理由：key 一旦进了 Release 附件，删附件也拦不住已经下载的人 ——
+    # 这是本项目里唯一"错了就不可挽回"的一步，值得用最笨的办法守。
+    $leaks = @()
+    # ① 整个产物里都不该有名为 .env 的文件（比只查 qingdu-ai 更保险）
+    Get-ChildItem -LiteralPath $AppDir -Recurse -File -Force |
+        Where-Object { $_.Name -eq '.env' } |
+        ForEach-Object { $leaks += "文件 $($_.FullName.Substring($AppDir.Length))" }
+
+    # ② 只扫**要发出去的文本文件**（.py/.md/.toml/.example …）。
+    #    刻意不去扫 jar/zip：二进制被当成文本读会产生大量噪声，
+    #    "sk-" 出现在压缩流里是可能的，那会造成假警报 ——
+    #    一个会误报的检查，最后一定会被人加 --skip 绕过，等于没有。
+    $scanExt = @('.py', '.md', '.toml', '.txt', '.cfg', '.ini', '.example', '.yml', '.yaml')
+    Get-ChildItem -LiteralPath $AiDestDir -Recurse -File -Force |
+        Where-Object { $scanExt -contains $_.Extension.ToLower() -or $_.Name -like '*.example' } |
+        ForEach-Object {
+            $txt = ''
+            try { $txt = [IO.File]::ReadAllText($_.FullName) } catch { return }
+            # sk- 后面跟 24 位以上字母数字 = 真 key 的形状。
+            # 文档里的占位符是 sk-你的key（中文），不会被这条命中。
+            foreach ($m in [regex]::Matches($txt, 'sk-[A-Za-z0-9]{24,}')) {
+                $leaks += "内容 $($_.FullName.Substring($AppDir.Length)): $($m.Value.Substring(0, 12))..."
+            }
+        }
+    if ($leaks.Count -gt 0) {
+        Write-Host ""
+        Write-Host "  ✗ 打包中止：产物里发现疑似 API key"
+        foreach ($l in $leaks) { Write-Host "      $l" }
+        Write-Host "    请检查 package.ps1 第 5 步的排除清单，不要把 .env 发出去。"
+        throw "产物中发现疑似 API key，已中止打包（拒绝生成可发布的 zip）"
+    }
+    Write-Host "    密钥检查：通过（产物中无 .env、无 sk- 形式的 key）"
 } else {
     Write-Host ""
     Write-Host "==> [5/5] 警告：找不到 qingdu-ai 目录，绿色版将不带 AI 服务源码"

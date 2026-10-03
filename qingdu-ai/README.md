@@ -25,7 +25,7 @@
 ## 快速开始
 
 > **用绿色版（免安装 zip）的看这里**：解压后 `QingduReader\qingdu-ai\` 就是本目录，
-> 命令照下面敲，只是路径不同。**每个新机器都要从第1 步开始** —— 包里带了源码，
+> 命令照下面敲，只是路径不同。**每个新机器都要从第 1 步开始** —— 包里带了源码，
 > 但**不带 `.venv`**，原因见下面「为什么绿色版不带 .venv」。
 
 ```powershell
@@ -35,27 +35,55 @@ cd qingdu-reader\qingdu-ai
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 
-# 2. 配模型（PowerShell）
-$env:QINGDU_LLM_BASE_URL = "https://api.deepseek.com/v1"
-$env:QINGDU_LLM_API_KEY  = "sk-你的key"
-$env:QINGDU_LLM_MODEL    = "deepseek-chat"
+# 2. 配模型（只需一次）—— 复制模板，填上自己的 key
+copy .env.example .env
+notepad .env          # 把 QINGDU_LLM_API_KEY 改成自己的
 
-# 3. 起服务
+# 3. 起服务（以后每次只要这一条）
 .\.venv\Scripts\python.exe -m qingdu_ai
 ```
 
-看到 `http://127.0.0.1:8000` 就成了。轻读会自动探测这个端口。
+看到这样的启动提示就成了：
+
+```
+轻读 AI 服务 v0.4.1  http://127.0.0.1:8000
+  配置：C:\...\qingdu-ai\.env
+        （API key 从该文件读取）
+  模型：deepseek-chat  (https://api.deepseek.com/v1)
+```
+
+轻读会自动探测 `127.0.0.1:8000`。
+
+### 🔴 配置写在 `.env` 里，不用每次敲环境变量
+
+`.env` 是一个纯文本文件，放在 `qingdu-ai\` 目录下：
+
+```
+QINGDU_LLM_BASE_URL=https://api.deepseek.com/v1
+QINGDU_LLM_API_KEY=sk-你的key
+QINGDU_LLM_MODEL=deepseek-chat
+```
+
+**写一次，以后不管用什么方式启动都能读到**，不用再敲三行 `set` / `$env:`。
+
+| 事项 | 说明 |
+|---|---|
+| 会不会被提交？ | **不会**。`.env` 已在 `.gitignore` 里；能提交的是 `.env.example`（只有占位符） |
+| 改了怎么生效？ | **要重启服务**。启动提示里的"配置：…\.env"就是它在读的证据 |
+| 优先级？ | **进程环境变量 > `.env`**。想临时覆盖某一次运行就设环境变量，不必改文件 |
+| 环境变量是空的呢？ | 视为未设置，继续用 `.env`（`set KEY=` 这种空值几乎总是误设） |
+| 支持行内注释吗？ | 不支持。`KEY=a # b` 里 `# b` 会被当成值的一部分 |
 
 ### 为什么绿色版不带 `.venv`
 
 因为 **venv 不能搬家**。它内部全是写死的本机路径：
 
-- `pyvenv.cfg` 里的 `home` 指向建venv 时用的那个 Python；
+- `pyvenv.cfg` 里的 `home` 指向建 venv 时用的那个 Python；
 - `Scripts\*.exe` 的启动器里烧进了绝对路径；
 - `site-packages\*.pth` 记录的是本机的 site-packages 位置。
 
 把别人的 `.venv` 拷到自己机器上，它会去找一个不存在的 Python，于是
-**"我明明装过了"但依然报`ModuleNotFoundError`** —— 比干脆不装更难排查。
+**"我明明装过了"但依然报 `ModuleNotFoundError`** —— 比干脆不装更难排查。
 所以 venv 属于"每台机器各建一次"，不属于能分发的产物。
 
 代价是首次使用多两条命令（建 venv + 装依赖，需要联网）。换来的是
@@ -104,14 +132,18 @@ ModuleNotFoundError: No module named 'fastapi'
 | 现象 | 原因 | 怎么办 |
 |---|---|---|
 | 轻读里 AI 入口一直置灰 | 服务没起，或起了但没配 key | 看 AI 面板提示：它会区分"服务未启动"和"未配置 key" |
-| `Address already in use` | 8000 端口被别的程序占了 | 换端口：`$env:QINGDU_PORT = 8001`（轻读侧探测地址也要跟着改） |
+| 改了 `.env` 却没生效 | 忘了重启服务，或被环境变量盖住 | 看启动提示的"配置：…"那一行，它会说清这次用的是哪个 |
+| `Address already in use` | 8000 端口被别的程序占了 | 换端口：在 `.env` 里加 `QINGDU_PORT=8001`（轻读侧探测地址也要跟着改） |
 | 轻读提示"AI 服务返回了无法解析的内容" | 轻读与服务端版本不匹配 | 两边都升到同一个 tag |
 
 ---
 
 ### 配置项
 
-| 环境变量 | 必填 | 说明 |
+下表的变量名在 `.env` 里和作为环境变量时完全一样。
+**优先级：进程环境变量 > `.env`**。
+
+| 变量名 | 必填 | 说明 |
 |---|---|---|
 | `QINGDU_LLM_BASE_URL` | 是 | OpenAI 兼容接口地址，如 `https://api.deepseek.com/v1` |
 | `QINGDU_LLM_API_KEY` | 是 | API key |
@@ -126,6 +158,7 @@ ModuleNotFoundError: No module named 'fastapi'
 
 **服务照常启动**，`/api/health` 的 `llm` 回报未配置状态，问答返回 503
 （实测文案：`未配置模型 API（需要 QINGDU_LLM_BASE_URL / QINGDU_LLM_API_KEY / QINGDU_LLM_MODEL）`）。
+启动时还会直接告诉你该往 `.env` 里加哪几行。
 
 三态的区分是刻意的：
 
@@ -134,6 +167,17 @@ ModuleNotFoundError: No module named 'fastapi'
 | 三项都填了 | `ready` |
 | 填了 base_url 和 model，只差 key | `no-api-key` |
 | base_url / model 有一项没填 | `not-configured` |
+
+> ⚠️ **`ready` 不等于 key 一定有效** —— 它只表示"三项都填了"。
+> key 拼错、被删除、余额不足，`/api/health` 照样报 `ready`，
+> 要到真正提问时才会拿到 401 / 402。所以配完之后**值得真的问一次**。
+> 想单独验 key，可以直接测一条最小请求：
+>
+> ```powershell
+> .\.venv\Scripts\python.exe -c "import httpx;from qingdu_ai.config import load_settings as L;s=L();r=httpx.post(s.base_url.rstrip('/')+'/chat/completions',headers={'Authorization':'Bearer '+s.api_key},json={'model':s.model,'messages':[{'role':'user','content':'hi'}],'max_tokens':1},timeout=30);print(r.status_code, r.text[:200])"
+> ```
+>
+> `200` = key 可用；`401` = key 无效；`402` = 余额不足。
 
 **为什么缺 key 不直接退出进程**：如果缺 key 就退出，轻读探测 8000 端口会得到"连接被拒绝"，
 没法区分"你忘了开服务"和"你忘了填 key" —— 两个完全不同的原因给同一句提示。

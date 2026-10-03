@@ -125,14 +125,28 @@ AI 只做**只读的理解与问答**，服务本身也不碰你的书库数据�
 cd qingdu-reader\qingdu-ai
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-$env:QINGDU_LLM_API_KEY = "sk-你的key"; $env:QINGDU_LLM_MODEL = "deepseek-chat"
+copy .env.example .env          # 然后在 .env 里填上自己的 key
 .\.venv\Scripts\python.exe -m qingdu_ai
 ```
 
-> ⚠️ **第 2 行和第 4 行必须用 `.venv` 里的解释器，不能写成裸 `python`。**
+> ⚠️ **第 2 行和第 5 行必须用 `.venv` 里的解释器，不能写成裸 `python`。**
 > 依赖装在虚拟环境里，而 `python` 指向系统解释器 —— 照抄成 `python -m qingdu_ai`
 > 会得到 `ModuleNotFoundError: No module named 'fastapi'`，
 > 报错看着像代码坏了，实际只是命令敲错。见 [`qingdu-ai/README.md`](qingdu-ai/README.md) 的「常见报错」。
+
+> **🔴 配置写在 `qingdu-ai\.env` 里，不用每次敲环境变量。**
+>
+> ```
+> QINGDU_LLM_BASE_URL=https://api.deepseek.com/v1
+> QINGDU_LLM_API_KEY=sk-你的key
+> QINGDU_LLM_MODEL=deepseek-chat
+> ```
+>
+> 写一次就永久生效，不管用 cmd、PowerShell 还是双击启动都读得到。
+> `.env` 已在 `.gitignore` 里，**不会被提交**；能提交的只有 `.env.example` 模板。
+>
+> ⚠️ `$env:` 是 **PowerShell** 语法，在 **cmd 里会报"文件名、目录名或卷标语法不正确"**
+> —— 而那个报错完全指不到真正的原因。用 `.env` 就没这个问题，两种终端通吃。
 
 轻读会自动探测 `127.0.0.1:8000`。**探测不到就禁用 AI 入口并给出明确提示**，
 不会让界面因为服务没起而卡住。
@@ -145,7 +159,7 @@ $env:QINGDU_LLM_API_KEY = "sk-你的key"; $env:QINGDU_LLM_MODEL = "deepseek-chat
 > QingduReader\
 > ├── QingduReader.exe
 > ├── app\  runtime\
-> └── qingdu-ai\        ← AI 服务源码（14 个文件）
+> └── qingdu-ai\        ← AI 服务源码（含 .env.example 配置模板）
 > ```
 >
 > 所以命令是在**解压出来的目录**里敲，不是仓库里：
@@ -154,6 +168,7 @@ $env:QINGDU_LLM_API_KEY = "sk-你的key"; $env:QINGDU_LLM_MODEL = "deepseek-chat
 > cd QingduReader\qingdu-ai
 > python -m venv .venv
 > .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+> copy .env.example .env          # 然后在 .env 里填上自己的 key
 > .\.venv\Scripts\python.exe -m qingdu_ai
 > ```
 >

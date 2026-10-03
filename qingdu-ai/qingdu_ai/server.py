@@ -24,7 +24,6 @@
 
 from __future__ import annotations
 
-import os
 import time
 
 from fastapi import FastAPI, HTTPException
@@ -138,22 +137,39 @@ def main() -> None:
     **为什么启动时打印提示而不是静默？**
     用户是手动敲命令起这个服务的，看到"缺 key，服务会起来但不能作答"
     比启动完什么反馈都没有要好。
+
+    **为什么还要打印"配置来自哪里"？**
+    因为配置现在可以来自 ``qingdu-ai/.env`` 或进程环境变量两处。
+    不打印的话，用户改了 ``.env`` 却发现没生效时，只能靠猜 ——
+    而最常见的两个原因（忘了重启 / 环境变量把它盖住了）都能靠这一行排除。
     """
     import uvicorn
 
-    from .config import DEFAULT_HOST, DEFAULT_PORT
-
-    host = os.environ.get("QINGDU_HOST", DEFAULT_HOST)
-    port = int(os.environ.get("QINGDU_PORT", str(DEFAULT_PORT)))
-
     s = load_settings()
-    print(f"轻读 AI 服务 v{__version__}  http://{host}:{port}")
+    print(f"轻读 AI 服务 v{__version__}  http://{s.host}:{s.port}")
+
+    if s.env_file:
+        print(f"  配置：{s.env_file}")
+        if "QINGDU_LLM_API_KEY" in s.from_file:
+            print("        （API key 从该文件读取）")
+        else:
+            # 文件在、但 key 不是它给的 —— 多半是环境变量盖住了文件，
+            # 用户改文件却不见效时，这行是关键线索。
+            print("        （该文件里没有生效的 QINGDU_LLM_API_KEY）")
+    else:
+        print("  配置：进程环境变量（未找到 .env）")
+
     if s.llm_state == "ready":
         print(f"  模型：{s.model}  ({s.base_url})")
     elif s.llm_state == "no-api-key":
         print("  ⚠ 未设置 QINGDU_LLM_API_KEY —— 服务会启动，但问答会返回 503")
+        print("     在 qingdu-ai\\.env 里加一行：QINGDU_LLM_API_KEY=sk-你的key")
     else:
         print("  ⚠ 未设置 QINGDU_LLM_BASE_URL / QINGDU_LLM_MODEL —— 服务会启动，但问答会返回 503")
-    print("  轻读需要看到本服务才会启用 AI 入口。按 Ctrl+C 停止。")
+        print("     在 qingdu-ai\\.env 里加（见同目录 .env.example）：")
+        print("       QINGDU_LLM_BASE_URL=https://api.deepseek.com/v1")
+        print("       QINGDU_LLM_MODEL=deepseek-chat")
+    print("  轻读需要看到本服务才会启用 AI 入口。")
+    print("  改完 .env 需要**重启本服务**才会生效。按 Ctrl+C 停止。")
 
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    uvicorn.run(app, host=s.host, port=s.port, log_level="info")

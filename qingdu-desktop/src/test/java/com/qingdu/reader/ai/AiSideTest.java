@@ -443,9 +443,46 @@ class AiSideTest {
             assertEquals(2, refs,
                     "SERVICE_DOWN_HINT 应恰好被引用两次（探测失败 / 调用失败），实际 " + refs);
 
+            int notConfiguredRefs =
+                    text.split("AiServiceClient\\.NOT_CONFIGURED_HINT", -1).length - 1;
+            assertEquals(2, notConfiguredRefs,
+                    "NOT_CONFIGURED_HINT 应恰好被引用两次（探测失败 / 调用失败），实际 "
+                            + notConfiguredRefs);
+
             // 反向检查：不能还留着旧的内联文案
             assertFalse(text.contains("请在 qingdu-ai 目录执行"),
                     "AiPanel 里不该再有内联的启动提示文案，两处都该用常量");
+            assertFalse(text.contains("等环境变量后重启服务"),
+                    "AiPanel 里不该再有旧的内联配置提示，两处都该用常量");
+        }
+
+        @Test
+        void 未配模型的提示必须给出可照抄的完整三行() {
+            // 🔴 用户实机踩过（2026-10-04）：「一直配不上 key」。
+            // 截图里他在 cmd 中敲了 PowerShell 的 $env: 语法，三行全报错
+            // （"文件名、目录名或卷标语法不正确"），而界面之前只说
+            // "请设置 QINGDU_LLM_BASE_URL / QINGDU_LLM_API_KEY / QINGDU_LLM_MODEL"
+            // —— 三个变量名，没值、没语法、没说写到哪，等于没说。
+            //
+            // 所以这里钉住：提示里必须有**完整的 KEY=VALUE 行**，
+            // 让用户能直接复制粘贴。
+            String hint = AiServiceClient.NOT_CONFIGURED_HINT;
+
+            assertTrue(hint.contains("QINGDU_LLM_BASE_URL="),
+                    "必须给出 .env 里可直接照抄的完整行，实际是：" + hint);
+            assertTrue(hint.contains("QINGDU_LLM_API_KEY="),
+                    "必须给出 .env 里可直接照抄的完整行，实际是：" + hint);
+            assertTrue(hint.contains("QINGDU_LLM_MODEL="),
+                    "必须给出 .env 里可直接照抄的完整行，实际是：" + hint);
+
+            assertTrue(hint.contains(".env"),
+                    "必须说清写到哪里（.env 文件），实际是：" + hint);
+            assertTrue(hint.contains("重启"),
+                    "必须提醒改完要重启服务，否则用户改完不见效只会更困惑：" + hint);
+
+            // 不能给出那个踩坑的写法本身
+            assertFalse(hint.contains("$env:"),
+                    "不要给 PowerShell 语法 —— 用户可能正在 cmd 里，" + hint);
         }
     }
 }

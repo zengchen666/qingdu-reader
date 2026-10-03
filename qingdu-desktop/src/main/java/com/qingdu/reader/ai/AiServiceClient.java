@@ -105,6 +105,29 @@ public final class AiServiceClient {
             + "（绿色版已带 qingdu-ai 源码，但不带 .venv —— 虚拟环境里全是"
             + "本机路径，必须在你的电脑上自己建一次）";
 
+    /**
+     * 「服务活着但没配模型 API」时给用户看的说明。
+     *
+     * <p>🔴 <b>必须给出可以直接照抄的完整三行，而不是只报变量名。</b>
+     * 原先这里写的是"请设置 QINGDU_LLM_BASE_URL / QINGDU_LLM_API_KEY /
+     * QINGDU_LLM_MODEL 后重新启动服务"—— 三个变量名，没有值、没有语法、
+     * 没说写到哪。用户实机反馈（2026-10-04）：「一直配不上 key」，
+     * 截图里能看到他在 cmd 里敲了 PowerShell 的 {@code $env:} 语法，
+     * 三行全部报错，而报错信息是"文件名、目录名或卷标语法不正确"，
+     * 完全指不到真正的原因。
+     *
+     * <p>所以这份提示要把三件事都说到：<b>写到哪个文件、写什么内容、
+     * 写完要重启</b>。变量名本身没有价值，能照抄的三行才有。
+     */
+    public static final String NOT_CONFIGURED_HINT =
+            "AI 服务已启动，但还没配模型 API。\n"
+            + "在 qingdu-ai\\.env 里写上这三行（复制 .env.example 也行）：\n"
+            + "   QINGDU_LLM_BASE_URL=https://api.deepseek.com/v1\n"
+            + "   QINGDU_LLM_API_KEY=sk-你的key\n"
+            + "   QINGDU_LLM_MODEL=deepseek-chat\n"
+            + "填完**重启 AI 服务**才会生效。\n"
+            + "（.env 里可以写明文、不会被提交；也可以改用系统环境变量，两者取其一）";
+
     private final String baseUrl;
     private final HttpClient http;
 

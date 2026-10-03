@@ -260,9 +260,7 @@ public final class AiPanel extends VBox {
             recheckButton.setVisible(true);
             recheckButton.setManaged(true);
             statusLabel.getStyleClass().add("reader-ai-status-warn");
-            statusLabel.setText("AI 服务已启动，但未配置模型 API key。\n"
-                    + "请设置 QINGDU_LLM_BASE_URL / QINGDU_LLM_API_KEY / QINGDU_LLM_MODEL"
-                    + " 后重新启动服务。");
+            statusLabel.setText(AiServiceClient.NOT_CONFIGURED_HINT);
             host.setStatus("AI 服务未配置");
             return;
         }
@@ -468,8 +466,7 @@ public final class AiPanel extends VBox {
                 recheckButton.setManaged(true);
             }
             case NOT_CONFIGURED -> {
-                setWarn("AI 服务未配置模型 API key。\n"
-                        + "请设置 QINGDU_LLM_API_KEY 等环境变量后重启服务。");
+                setWarn(AiServiceClient.NOT_CONFIGURED_HINT);
                 serviceReady = false;
                 setInputEnabled(false);
             }
