@@ -122,11 +122,13 @@ public final class AiPanel extends VBox {
     private volatile boolean serviceReady;
 
     /**
-     * 最近一次提问用的检索词 —— 引用点击跳转时拿它做高亮。
+     * 最近一次提问<b>真的召回了章节</b>的检索词 —— 引用点击跳转时拿它做高亮。
      *
-     * <p>为什么存字段而不是每次重算：{@link #keywordOf} 是纯函数，重算也一样，
-     * 但存下来能让"这次问答"的上下文完整可见，也避免 cellFactory 里
-     * 重复计算（cellFactory 是工厂，不该有业务逻辑）。
+     * <p>为什么不用整句：整句在原文里根本不存在（见 {@code AskKeyword}），
+     * 拿去高亮一个都标不出来。这里存的是候选阶梯里第一个有命中的短词。
+     *
+     * <p>为什么存字段而不是每次重算：cellFactory 是工厂，不该有业务逻辑；
+     * 而且重算得再跑一遍 FTS 才能知道该用哪个词。
      */
     private volatile String lastKeyword = "";
 
@@ -303,8 +305,15 @@ public final class AiPanel extends VBox {
             Platform.runLater(() -> {
                 if (chunks.isEmpty()) {
                     setBusy(false);
-                    setWarn("没有可用于问答的原文片段。\n"
-                            + "请确认这本书已建立全文索引（搜索页可批量建立）。");
+                    // 🔴 措辞要区分"没索引"与"召不回"，不能一律说"请建立索引"。
+                    // 真机上就踩过这个：用户明明建了索引，却被反复引导去重建，
+                    // 而真实原因是长问句在 FTS 的 AND 语义下召不回
+                    // （见 AskKeyword 类注释）。把用户往错误方向引比报错更糟 ——
+                    // 他会以为是自己操作错了。
+                    setWarn("没有召回到相关原文片段。\n"
+                            + "关键词检索要求书里出现过你问的词。\n"
+                            + "试试：换成书里的人名、地名、门派名（越短越好），"
+                            + "或先确认这本书已建立全文索引。");
                     return;
                 }
                 callService(question, chunks, List.of(book.id()));
@@ -317,44 +326,79 @@ public final class AiPanel extends VBox {
     /**
      * 检索 + 切片段。
      *
-     * <p><b>检索词怎么来？</b>这里做的是最朴素的处理：把问题里的疑问词去掉，
-     * 剩下的整串交给 {@code SearchStore}。真正的重排在 Python 侧做
-     * （验收报告第七节：轻读<b>不排序</b>，两处排序就是两处真理）。
+     * <p><b>🔴 检索词是一个"阶梯"，不是单个词。</b>
+     * 见 {@link AskKeyword} 的类注释：FTS5 是 AND 语义，把整句问题当检索词时，
+     * 「苏沐橙喜欢谁」会变成要求原文同时出现
+     * {@code 苏沐 沐橙 橙喜 喜欢 欢谁} 五个相邻对 ——
+     * 而「橙喜」这种跨词相邻对在正文里几乎不存在，于是<b>恒定 0 召回</b>。
+     * 真机四本语料实测：短问句能召回 1523 章，同一批书上的长问句召回 0 章。
      *
-     * <p><b>为什么不在这里做 n-gram？</b>因为服务端会用问题重新重排一次，
-     * 轻读这层的召回只需要"大致相关"即可。召回不足的代价是答案质量下降，
-     * 而 Python 侧的重排会把它捞回来。
+     * <p><b>所以这里逐个试，召不回就降级到下一个候选</b>，
+     * 凑够 {@link #MAX_HIT_CHAPTERS} 章立刻停 ——
+     * 每试一个词都要花一次 FTS 查询（16~104 ms）加逐章随机读，不早停会卡住界面。
+     *
+     * <p><b>为什么不在这里做 n-gram 重排</b>：真正的重排在 Python 侧做。
+     * 轻读这层只需要"大致相关"，两边都排就是两处真理。
      */
     private List<AiModels.Chunk> buildChunks(Book book, String question) {
         try {
-            String keyword = keywordOf(question);
-            lastKeyword = keyword;
-            if (keyword.isBlank()) {
+            List<String> terms = AskKeyword.terms(question);
+            if (terms.isEmpty()) {
+                lastKeyword = "";
                 return List.of();
             }
             var chapters = new TreeMap<Integer, List<ChapterBlock>>();
-            // 先取检索命中的章
-            var hitChapters = host.searchableChapters(keyword);
-            for (int chapterIndex : hitChapters) {
+            for (String term : terms) {
                 if (chapters.size() >= MAX_HIT_CHAPTERS) {
-                    // ⚠️ 只取少数几个命中章：Python 侧会做章节打散，轻读多送
-                    // 只会让请求体变大，不影响最终选出的上下文
                     break;
                 }
-                var blocks = host.chapterBlocks(chapterIndex);
-                if (blocks != null && !blocks.isEmpty()) {
-                    chapters.put(chapterIndex, blocks);
+                var hitChapters = host.searchableChapters(term);
+                if (hitChapters.isEmpty()) {
+                    continue;
+                }
+                // ⚠️ 只取少数几个命中章：Python 侧会做章节打散，轻读多送
+                // 只会让请求体变大，不影响最终选出的上下文
+                for (int chapterIndex : hitChapters) {
+                    if (chapters.size() >= MAX_HIT_CHAPTERS) {
+                        break;
+                    }
+                    var blocks = host.chapterBlocks(chapterIndex);
+                    if (blocks != null && !blocks.isEmpty()) {
+                        chapters.put(chapterIndex, blocks);
+                    }
                 }
             }
+            // 引用高亮用第一个"真的召回了章节"的词：
+            // 拿整句去高亮会一个都标不出来（原文里没有整句话）。
+            lastKeyword = chapters.isEmpty() ? "" : firstTermThatHit(terms);
             return ChunkSplitter.collect(book, chapters, MAX_CHUNKS, host::chapterTitle);
         } catch (RuntimeException e) {
             return List.of();
         }
     }
 
-    /** 去掉常见疑问词，剩下的当检索词。逻辑见 {@link AskKeyword}（那里能单测）。 */
-    static String keywordOf(String question) {
-        return AskKeyword.of(question);
+    /**
+     * 找出第一个真的召回了章节的候选词。
+     *
+     * <p><b>为什么必须重新查一遍而不是顺便记下来</b>：{@code buildChunks}
+     * 里每轮都调了 {@code searchableChapters}，把命中的那个词记下来
+     * 顺手就能做。之所以没那么写，是因为高亮这个词<b>只影响界面观感</b>，
+     * 而多存一个字段就多一处跨线程可变状态（面板方法都在后台线程跑）——
+     * 那个字段还要被 FX 线程的 cellFactory 读。用一次廉价查询换掉一个共享状态，
+     * 在这个规模下是更划算的交易：一次 FTS 查询 16~104 ms，
+     * 而点一次引用的用户感知延迟远大于此。
+     */
+    private String firstTermThatHit(List<String> terms) {
+        for (String term : terms) {
+            try {
+                if (!host.searchableChapters(term).isEmpty()) {
+                    return term;
+                }
+            } catch (RuntimeException e) {
+                return terms.get(0);
+            }
+        }
+        return terms.isEmpty() ? "" : terms.get(0);
     }
 
     private void callService(String question, List<AiModels.Chunk> chunks, List<String> bookIds) {
