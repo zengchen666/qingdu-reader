@@ -50,6 +50,8 @@ class ReaderSettingsTest {
         assertEquals("系统默认", defaults.fontFamilyLabel());
         assertTrue(defaults.fontSize() >= ReaderSettings.MIN_FONT_SIZE);
         assertTrue(defaults.fontSize() <= ReaderSettings.MAX_FONT_SIZE);
+        assertTrue(defaults.lineSpacing() >= ReaderSettings.MIN_LINE_SPACING);
+        assertTrue(defaults.lineSpacing() <= ReaderSettings.MAX_LINE_SPACING);
     }
 
     // ==================== 边界钳制 ====================
@@ -60,18 +62,27 @@ class ReaderSettingsTest {
         // 这一条是刻意的取舍：值来自数据库，可能被手改过。
         // 字号写成了 9999，正确的反应是"按最大字号显示"，而不是"程序打不开"
         assertEquals(ReaderSettings.MAX_FONT_SIZE,
-                new ReaderSettings(null, null, 9999, 10).fontSize());
+                new ReaderSettings(null, null, 9999, 10, 1.6).fontSize());
         assertEquals(ReaderSettings.MIN_FONT_SIZE,
-                new ReaderSettings(null, null, 2, 10).fontSize());
+                new ReaderSettings(null, null, 2, 10, 1.6).fontSize());
     }
 
     @Test
     @DisplayName("段间距同样被钳制")
     void spacingIsClamped() {
         assertEquals(ReaderSettings.MAX_PARAGRAPH_SPACING,
-                new ReaderSettings(null, null, 16, 999).paragraphSpacing(), 1e-9);
+                new ReaderSettings(null, null, 16, 999, 1.6).paragraphSpacing(), 1e-9);
         assertEquals(ReaderSettings.MIN_PARAGRAPH_SPACING,
-                new ReaderSettings(null, null, 16, -5).paragraphSpacing(), 1e-9);
+                new ReaderSettings(null, null, 16, -5, 1.6).paragraphSpacing(), 1e-9);
+    }
+
+    @Test
+    @DisplayName("行距被钳制在 1.0~2.5，越界不抛异常")
+    void lineSpacingIsClamped() {
+        assertEquals(ReaderSettings.MAX_LINE_SPACING,
+                new ReaderSettings(null, null, 16, 10, 99).lineSpacing(), 1e-9);
+        assertEquals(ReaderSettings.MIN_LINE_SPACING,
+                new ReaderSettings(null, null, 16, 10, 0).lineSpacing(), 1e-9);
     }
 
     @Test
@@ -79,7 +90,23 @@ class ReaderSettingsTest {
     void blankFontFamilyBecomesNull() {
         // 统一成 null 很关键：JavaFX 的 -fx-font-family 遇到空串会解析失败，
         // 连带整条行内样式（包括字号）一起失效
-        assertNull(new ReaderSettings(null, "   ", 17, 14).fontFamily());
+        assertNull(new ReaderSettings(null, "   ", 17, 14, 1.6).fontFamily());
+    }
+
+    // ==================== 行距换算 ====================
+
+    @Test
+    @DisplayName("行距倍数 1.0 换算成 0 像素，且不出现负值")
+    void lineSpacingPixels() {
+        ReaderSettings tight = ReaderSettings.defaults().withLineSpacing(1.0);
+        assertEquals(0.0, tight.lineSpacingPixels(1.0), 1e-9);
+
+        // 字号 20、倍数 1.5 → 每行额外 10 像素
+        ReaderSettings loose = ReaderSettings.defaults().withFontSize(20).withLineSpacing(1.5);
+        assertEquals(10.0, loose.lineSpacingPixels(1.0), 1e-9);
+
+        // 标题字号是正文的 1.35 倍，行距得跟着放大，否则标题换行会挤在一起
+        assertEquals(13.5, loose.lineSpacingPixels(1.35), 1e-9);
     }
 
     // ==================== 复制修改 ====================
@@ -91,6 +118,7 @@ class ReaderSettingsTest {
 
         ReaderSettings bigger = base.withFontSize(base.fontSize() + 5);
         ReaderSettings dark = base.withTheme(Theme.DARK);
+        ReaderSettings looser = base.withLineSpacing(2.0);
 
         assertNotEquals(base.fontSize(), bigger.fontSize());
         assertEquals(base.fontSize(), ReaderSettings.defaults().fontSize(), "原对象不该被改");
@@ -99,6 +127,8 @@ class ReaderSettingsTest {
         // 改一项不该影响其它项
         assertEquals(base.fontSize(), dark.fontSize());
         assertEquals(base.paragraphSpacing(), bigger.paragraphSpacing(), 1e-9);
+        assertEquals(2.0, looser.lineSpacing(), 1e-9);
+        assertEquals(base.lineSpacing(), bigger.lineSpacing(), 1e-9);
     }
 
     // ==================== 与键值表互转 ====================
@@ -106,7 +136,7 @@ class ReaderSettingsTest {
     @Test
     @DisplayName("toMap / from 往返之后完全相等")
     void mapRoundTrip() {
-        ReaderSettings original = new ReaderSettings(Theme.GREEN, "楷体", 21, 16);
+        ReaderSettings original = new ReaderSettings(Theme.GREEN, "楷体", 21, 16, 1.8);
 
         ReaderSettings restored = ReaderSettings.from(original.toMap());
 
@@ -138,7 +168,7 @@ class ReaderSettingsTest {
         Map<String, String> partial = new HashMap<>();
         partial.put(ReaderSettings.KEY_THEME, "dark");
         partial.put(ReaderSettings.KEY_FONT_SIZE, "24");
-        // 故意不提供字号字体和段间距
+        // 故意不提供字体、段间距、行距
 
         ReaderSettings loaded = ReaderSettings.from(partial);
 
@@ -146,16 +176,43 @@ class ReaderSettingsTest {
         assertEquals(24, loaded.fontSize());
         assertNull(loaded.fontFamily());
         assertEquals(ReaderSettings.defaults().paragraphSpacing(), loaded.paragraphSpacing(), 1e-9);
+        assertEquals(ReaderSettings.defaults().lineSpacing(), loaded.lineSpacing(), 1e-9);
+    }
+
+    @Test
+    @DisplayName("行距键是 v0.5 才加的，老配置里没有也能读回来")
+    void legacyMapWithoutLineSpacing() {
+        // 这就是"不需要写数据库迁移"的理由：缺键走兜底分支拿到默认值，
+        // 而不是整份配置失效
+        Map<String, String> legacy = new HashMap<>();
+        legacy.put(ReaderSettings.KEY_FONT_SIZE, "19");
+        legacy.put(ReaderSettings.KEY_PARAGRAPH_SPACING, "12");
+
+        ReaderSettings loaded = ReaderSettings.from(legacy);
+
+        assertEquals(19, loaded.fontSize());
+        assertEquals(12.0, loaded.paragraphSpacing(), 1e-9);
+        assertEquals(ReaderSettings.DEFAULT_LINE_SPACING, loaded.lineSpacing(), 1e-9);
+    }
+
+    @Test
+    @DisplayName("行距写成 NaN 这类「能解析但不合法」的值时退回默认")
+    void nonFiniteLineSpacingFallsBack() {
+        Map<String, String> broken = new HashMap<>();
+        broken.put(ReaderSettings.KEY_LINE_SPACING, "NaN");
+
+        assertEquals(ReaderSettings.DEFAULT_LINE_SPACING,
+                ReaderSettings.from(broken).lineSpacing(), 1e-9);
     }
 
     @Test
     @DisplayName("已知键清单覆盖 toMap 里所有非空项")
     void knownKeysCoverToMap() {
-        ReaderSettings full = new ReaderSettings(Theme.DARK, "宋体", 20, 18);
+        ReaderSettings full = new ReaderSettings(Theme.DARK, "宋体", 20, 18, 1.7);
 
         // SettingStore.saveSettings 靠 KNOWN_KEYS 做"先删后写"，
         // 少列一个键就会留下脏数据，所以这里把两者对齐关系锁住
         assertTrue(ReaderSettings.KNOWN_KEYS.containsAll(full.toMap().keySet()));
-        assertEquals(4, ReaderSettings.KNOWN_KEYS.size());
+        assertEquals(5, ReaderSettings.KNOWN_KEYS.size());
     }
 }

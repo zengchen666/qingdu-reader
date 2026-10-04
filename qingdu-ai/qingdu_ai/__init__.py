@@ -18,6 +18,6 @@
 #      PackageNotFoundError —— 服务根本起不来。
 # 所以只能写死两份，升版时两处一起改。
 # （Java 侧同理，共四处：5 个 POM、package.ps1 的 $Version、ReaderView.VERSION、本文件）
-__version__ = "0.4.2"
+__version__ = "0.5.0"
 
 __all__ = ["__version__"]

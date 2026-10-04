@@ -24,7 +24,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 /**
- * 「阅读设置」的内容面板：字体、字号、段间距、预览。
+ * 「阅读设置」的内容面板：字体、字号、段间距、行距、预览。
  *
  * <p><b>它是"改一项、立刻生效"的。</b>没有确定 / 取消按钮 ——
  * 这个面板被放进一个<b>非模态</b>窗口（{@link SettingsWindow}），
@@ -93,9 +93,13 @@ public final class SettingsPane extends VBox {
     private final Slider spacingSlider = new Slider(
             ReaderSettings.MIN_PARAGRAPH_SPACING, ReaderSettings.MAX_PARAGRAPH_SPACING,
             ReaderSettings.defaults().paragraphSpacing());
+    private final Slider lineSpacingSlider = new Slider(
+            ReaderSettings.MIN_LINE_SPACING, ReaderSettings.MAX_LINE_SPACING,
+            ReaderSettings.defaults().lineSpacing());
 
     private final Label sizeValueLabel = new Label();
     private final Label spacingValueLabel = new Label();
+    private final Label lineSpacingValueLabel = new Label();
     private final VBox previewBox = new VBox();
 
     private final Consumer<ReaderSettings> onChange;
@@ -156,13 +160,21 @@ public final class SettingsPane extends VBox {
         grid.setPadding(new Insets(18, 20, 6, 20));
 
         prepareFontBox();
-        configureSlider(sizeSlider, ReaderSettings.MIN_FONT_SIZE, ReaderSettings.MAX_FONT_SIZE);
-        configureSlider(spacingSlider, ReaderSettings.MIN_PARAGRAPH_SPACING, ReaderSettings.MAX_PARAGRAPH_SPACING);
+        configureSlider(sizeSlider, ReaderSettings.MIN_FONT_SIZE, ReaderSettings.MAX_FONT_SIZE, 1);
+        configureSlider(spacingSlider, ReaderSettings.MIN_PARAGRAPH_SPACING,
+                ReaderSettings.MAX_PARAGRAPH_SPACING, 1);
+        // 行距是 1.0~2.5 的倍率，刻度必须细到 0.1 —— 按 1 吸附的话
+        // 这个滑块只能在 1.0 / 2.0 两个值之间跳，等于没有中间档
+        configureSlider(lineSpacingSlider, ReaderSettings.MIN_LINE_SPACING,
+                ReaderSettings.MAX_LINE_SPACING, 0.1);
+
         // 数值列右对齐，三行文字的左边缘才能对齐
         sizeValueLabel.setAlignment(Pos.CENTER_RIGHT);
         spacingValueLabel.setAlignment(Pos.CENTER_RIGHT);
-        sizeValueLabel.getStyleClass().add("settings-value");
-        spacingValueLabel.getStyleClass().add("settings-value");
+        lineSpacingValueLabel.setAlignment(Pos.CENTER_RIGHT);
+        for (Label valueLabel : List.of(sizeValueLabel, spacingValueLabel, lineSpacingValueLabel)) {
+            valueLabel.getStyleClass().add("settings-value");
+        }
 
         grid.add(label("字体"), 0, 0);
         grid.add(fontBox, 1, 0);
@@ -175,6 +187,10 @@ public final class SettingsPane extends VBox {
         grid.add(label("段间距"), 0, 2);
         grid.add(spacingSlider, 1, 2);
         grid.add(spacingValueLabel, 2, 2);
+
+        grid.add(label("行距"), 0, 3);
+        grid.add(lineSpacingSlider, 1, 3);
+        grid.add(lineSpacingValueLabel, 2, 3);
         return grid;
     }
 
@@ -220,12 +236,18 @@ public final class SettingsPane extends VBox {
         fontBox.setOnAction(e -> onFontChanged());
     }
 
-    private void configureSlider(Slider slider, double min, double max) {
+    /**
+     * 滑块的统一配置。
+     *
+     * @param tickUnit 吸附步长。字号和段间距是整数（1），行距要 0.1。
+     *
+     * <p>吸附到刻度是必要的：否则用户很难刚好拖到 18，会得到 17.83 这种值，
+     * 显示成 "18" 但实际存的是 17.83，下次打开又显示成 18 —— 很别扭。
+     */
+    private void configureSlider(Slider slider, double min, double max, double tickUnit) {
         slider.setMinorTickCount(0);
-        slider.setMajorTickUnit(1);
-        slider.setBlockIncrement(1);
-        // 吸附到整数刻度：否则用户很难刚好拖到 18，会得到 17.83 这种值，
-        // 显示成 "18" 但实际存的是 17.83，下次打开又显示成 18 —— 很别扭
+        slider.setMajorTickUnit(tickUnit);
+        slider.setBlockIncrement(tickUnit);
         slider.setSnapToTicks(true);
         slider.setPrefWidth(240);
         slider.valueProperty().addListener((obs, oldValue, newValue) -> onSliderChanged());
@@ -261,6 +283,7 @@ public final class SettingsPane extends VBox {
             }
             sizeSlider.setValue(current.fontSize());
             spacingSlider.setValue(current.paragraphSpacing());
+            lineSpacingSlider.setValue(current.lineSpacing());
 
             refreshValueLabels();
             refreshPreview();
@@ -273,7 +296,7 @@ public final class SettingsPane extends VBox {
      * 当前面板上的设置。
      *
      * <p>主题不在这个面板里（主题菜单在「视图」下），所以它始终跟着
-     * 外部传进来的那一份走 —— {@link ReaderSettings#withTheme} 之外的三项
+     * 外部传进来的那一份走 —— {@link ReaderSettings#withTheme} 之外的几项
      * 才是这里能改的东西。
      */
     public ReaderSettings currentSettings() {
@@ -295,7 +318,10 @@ public final class SettingsPane extends VBox {
     private void onSliderChanged() {
         current = current
                 .withFontSize((int) Math.round(sizeSlider.getValue()))
-                .withParagraphSpacing(Math.round(spacingSlider.getValue()));
+                .withParagraphSpacing(Math.round(spacingSlider.getValue()))
+                // 行距保留一位小数：这是滑块的实际步长，
+                // 不 round 的话会得到 1.6000000000000003 这种值被写进数据库
+                .withLineSpacing(Math.round(lineSpacingSlider.getValue() * 10.0) / 10.0);
         refreshValueLabels();
         refreshPreview();
         publish();
@@ -311,14 +337,15 @@ public final class SettingsPane extends VBox {
     private void refreshValueLabels() {
         sizeValueLabel.setText(current.fontSize() + " px");
         spacingValueLabel.setText((long) current.paragraphSpacing() + " px");
+        lineSpacingValueLabel.setText(String.format("%.1f 倍", current.lineSpacing()));
     }
 
     /**
      * 重画预览区。
      *
      * <p>段间距是容器属性（{@code VBox} 的 spacing），所以设在外层的
-     * {@code previewBox} 上；字体和字号则由 {@link ChapterRenderer} 写进各段的
-     * 行内样式里 —— 和正文区的分工完全一致。
+     * {@code previewBox} 上；字体、字号、行距则由 {@link ChapterRenderer} 写进各段的
+     * 行内样式与 {@code TextFlow} 属性里 —— 和正文区的分工完全一致。
      */
     private void refreshPreview() {
         previewBox.setSpacing(current.paragraphSpacing());

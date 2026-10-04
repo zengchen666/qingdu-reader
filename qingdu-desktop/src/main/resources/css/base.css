@@ -305,14 +305,25 @@
     -fx-background-color: -qd-content-bg;
 }
 
-/* 段落与标题：颜色归主题管，字体/字号由代码按用户设置写行内样式 */
+/* 段落与标题：颜色归主题管，字体/字号由代码按用户设置写行内样式
+
+   ⚠️ v0.5 起正文一律是 TextFlow + Text（Label 不支持行距），所以每条规则
+   都必须同时写 -fx-text-fill 和 -fx-fill 两个：
+     · -fx-text-fill 是 Labeled（Label）的属性
+     · -fx-fill     是 Shape（Text）的属性
+   只写一个，另一类节点就会静默退回黑色 —— 在浅色主题下看不出来，
+   切到夜间主题才会变成"黑底上的黑字"，是那种最难发现的一类 bug。
+   现在正文只用 Text，但 .reader-image-note / .reader-muted-hint 等
+   仍是 Label，两条都不能省。 */
 .reader-paragraph {
     -fx-text-fill: -qd-text;
+    -fx-fill: -qd-text;
 }
 
 .reader-heading {
     -fx-font-weight: bold;
     -fx-text-fill: -qd-text-heading;
+    -fx-fill: -qd-text-heading;
     -fx-padding: 0 0 8 0;
 }
 
@@ -327,6 +338,12 @@
     -fx-fill: -qd-highlight;
     -fx-font-weight: bold;
     -fx-underline: true;
+}
+
+/* EPUB 插图。宽度由代码按字号算（见 ChapterRenderer.imageWidth），
+   这里只管它和上下文字的间距，避免图片贴着段落。 */
+.reader-image {
+    -fx-padding: 6 0 10 0;
 }
 
 .reader-image-note {

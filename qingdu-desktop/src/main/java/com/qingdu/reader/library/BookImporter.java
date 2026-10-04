@@ -3,7 +3,8 @@ package com.qingdu.reader.library;
 import com.qingdu.common.domain.Book;
 import com.qingdu.common.util.BookId;
 import com.qingdu.core.parser.BookParseException;
-import com.qingdu.core.parser.txt.TxtBookParser;
+import com.qingdu.core.parser.BookParsers;
+import com.qingdu.core.parser.spi.BookParser;
 import com.qingdu.store.QingduStore;
 
 import java.io.IOException;
@@ -21,7 +22,7 @@ import java.util.Locale;
  *
  * <p><b>它只做一件事：把磁盘上的 TXT 登记进书库。不建索引。</b>
  * 这个取舍是这一段设计里最要紧的地方 ——
- * {@link TxtBookParser#parseMetadata} 只读文件头 4KB，
+ * {@code BookParser#parseMetadata} 只读文件头几 KB（EPUB 只读 OPF 清单），
  * 一本几毫秒；而 {@code index()} 要把整个文件读进内存扫一遍找章节，
  * 一本几十到几百毫秒。一个装了两百本的文件夹，
  * "逐个建索引"是几十秒的卡顿，"只记元信息"是一秒内的事。
@@ -53,20 +54,24 @@ public class BookImporter {
     public static final int DEFAULT_MAX_FILES = 2000;
 
     private final QingduStore store;
-    private final TxtBookParser parser;
     private final int maxFiles;
 
     public BookImporter(QingduStore store) {
-        this(store, new TxtBookParser(), DEFAULT_MAX_FILES);
+        this(store, DEFAULT_MAX_FILES);
     }
 
-    /** 允许注入切分器和上限，方便测试。 */
-    public BookImporter(QingduStore store, TxtBookParser parser, int maxFiles) {
+    /**
+     * @param maxFiles 单次最多处理多少个文件；<= 0 表示用默认值
+     *
+     * <p>v0.5 起<b>不再注入解析器</b>：一个文件夹里可能 TXT 和 EPUB 混着放，
+     * "整个导入过程固定用一个解析器"这个前提已经不成立了。
+     * 改成每个文件自己从 {@link BookParsers} 里挑。
+     */
+    public BookImporter(QingduStore store, int maxFiles) {
         if (store == null) {
             throw new IllegalArgumentException("store 不能为空");
         }
         this.store = store;
-        this.parser = (parser == null) ? new TxtBookParser() : parser;
         this.maxFiles = maxFiles <= 0 ? DEFAULT_MAX_FILES : maxFiles;
     }
 
@@ -90,7 +95,7 @@ public class BookImporter {
         /** 一条给用户看的汇总。界面上直接显示它，不用自己拼字符串。 */
         public String summary() {
             if (scanned == 0) {
-                return "这个文件夹里没有找到 TXT 文件";
+                return "这个文件夹里没有找到支持的电子书（TXT / EPUB）";
             }
             StringBuilder sb = new StringBuilder("已导入 ").append(imported).append(" 本");
             if (skipped > 0) {
@@ -137,8 +142,14 @@ public class BookImporter {
                     skipped++;
                     continue;
                 }
-                // 只读文件头拿书名作者；章节索引留到真正打开那本书的时候再建
-                Book book = parser.parseMetadata(file);
+                // 按扩展名挑解析器。扫描时已经只收"支持的格式"，
+                // 这里再取一次是为了拿到具体实现
+                BookParser chosen = BookParsers.forFile(file);
+                if (chosen == null) {
+                    continue;
+                }
+                // 只读元信息拿书名作者；章节索引留到真正打开那本书的时候再建
+                Book book = chosen.parseMetadata(file);
                 store.books().save(book, 0, null);
                 imported++;
             } catch (BookParseException | RuntimeException e) {
@@ -183,7 +194,7 @@ public class BookImporter {
         Files.walkFileTree(folder, new SimpleFileVisitor<>() {
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-                if (isTxt(file)) {
+                if (isSupportedFile(file)) {
                     found.add(file);
                     if (found.size() >= maxFiles) {
                         return FileVisitResult.TERMINATE;
@@ -200,9 +211,9 @@ public class BookImporter {
         return found;
     }
 
-    private static boolean isTxt(Path file) {
-        String name = file.getFileName().toString();
-        if (!name.toLowerCase(Locale.ROOT).endsWith(".txt")) {
+    /** 这个文件是不是"我们支持的格式且不是隐藏文件"。 */
+    private static boolean isSupportedFile(Path file) {
+        if (!BookParsers.isSupported(file)) {
             return false;
         }
         try {

@@ -34,6 +34,22 @@
 
 还没打开任何书时，中央显示的是书架：一排排封面卡片，顶部按分组筛选，卡片上能看到分组名和"这本书读了多久"。`Ctrl+F` 可以搜当前书，也可以切到「全库」一次搜遍所有已建索引的书。`Ctrl+G` 打开「AI 问答」——基于你书里的原文回答，每条结论都带可点击核对的引用出处。
 
+`F11` 进入沉浸阅读：全屏，工具栏、状态栏、侧栏一起收起，只留正文；退出时原样还原（你本来就没开侧栏的话，不会自作主张替你展开）。想彻底不动手就开「阅读 → 自动滚动」：正文以 36 px/秒匀速往上走，读到章末自动翻下一章继续，直到全书读完才停；滚一下鼠标滚轮就立刻停。
+
+### 快捷键
+
+| 按键 | 作用 |
+|---|---|
+| `Ctrl + O` | 打开文件（TXT / EPUB） |
+| `Ctrl + Shift + O` | 导入文件夹（批量） |
+| `Ctrl + F` | 书内 / 全库全文搜索 |
+| `Ctrl + G` | AI 问答 |
+| `Ctrl + B` / `Ctrl + L` | 加书签 / 书签列表 |
+| `Ctrl + =` / `Ctrl + -` | 字号放大 / 缩小 |
+| `Alt + ← / →` | 上一章 / 下一章 |
+| `F9` | 收起 / 展开目录栏 |
+| `F11` | 沉浸阅读（全屏 + 隐藏界面元素） |
+
 应用图标同样只有两个颜色：底色取的是主题里的 `-qd-accent`，书页取纸面色 —— 和界面是同一套色。各尺寸与浅色 / 深色背景下的实际效果见 [`docs/icon-preview.png`](docs/icon-preview.png)。
 
 ---
@@ -69,8 +85,8 @@
 | 目录栏可收起 | `F9` 或信息条右侧开关收起 / 展开，正文随之在整块区域居中；收起状态会记住原本的宽度 | **已完成（v0.2.1）** |
 | 主题换肤 | 日间 / 护眼 / 雾蓝 / 羊皮纸 / 夜间 / 墨黑 六套配色，切换即时生效 | **已完成（v0.2.1 扩到六套）** |
 | 阅读设置 | 独立的**非模态**窗口，拖滑块时主窗口正文实时重排，所见即所得 | **已完成（v0.2.1）** |
-| 排版自定义 | 字体、字号、段距、版心宽度（跟随字号，一行约 34 字）；行距 / 双栏待做 | **部分完成** |
-| 沉浸阅读 | 全屏无边框、滚轮翻页、自动滚动 | 计划中 |
+| 排版自定义 | 字体、字号、**行距**、段距、版心宽度（跟随字号，一行约 34 字）；双栏待做 | **已完成（v0.5.0 补齐行距）** |
+| 沉浸阅读 | `F11` 全屏无边框（自动收起工具栏 / 状态栏 / 侧栏，退出还原）、自动滚动（36 px/秒，滚到章末自动翻下一章，滚一下鼠标即停） | **已完成（v0.5.0）** |
 
 ### 书库管理
 
@@ -185,10 +201,10 @@ copy .env.example .env          # 然后在 .env 里填上自己的 key
 | 特性 | 说明 | 状态 |
 |---|---|---|
 | TXT | 自研解析引擎，重点优化中文场景 | **已完成** |
-| EPUB | 基于 epub4j 解析 + 统一章节模型归一化 | 计划中 |
-| 更多格式 | MOBI / AZW3 / PDF / 漫画（通过 SPI 扩展） | 远期 |
+| EPUB | 自研解析（zip + XML，零第三方依赖），统一章节模型归一化，插图抽到本地缓存后按原位置渲染 | **已完成（v0.5.0）** |
+| 更多格式 | MOBI / AZW3 / PDF / 漫画（往 `BookParsers` 注册表里加一个实现即可） | 远期 |
 | 听书 | TTS 朗读，逐句高亮同步 | 远期 |
-| 多端同步 | 阅读进度云端同步，多设备无缝续读 | 远期 |
+| 多端同步 | 阅读进度云端同步，多设备无缝续读 | **不在本项目范围**（见下方说明） |
 
 ---
 
@@ -210,8 +226,8 @@ copy .env.example .env          # 然后在 .env 里填上自己的 key
 | 构建工具 | Maven（多模块） | 已落地 |
 | 打包 | jlink（裁剪运行时）+ jpackage（绿色版 app-image） | 已落地 |
 | 依赖注入 / 容器 | Spring Boot 3（`WebApplicationType.NONE`，不启动 Web 容器） | 计划中 |
-| EPUB 解析 | epub4j | 计划中 |
-| HTML 提纯 | jsoup（白名单过滤） | 计划中 |
+| EPUB 解析 | **自研**：`java.util.zip` + `javax.xml.parsers`（JDK 自带，零新依赖） | 已落地 |
+| HTML 提纯 | **不需要** —— EPUB 只抽文本与图片引用，从不渲染原始 HTML（比白名单过滤更彻底） | 已确定 |
 | 全文检索 | SQLite FTS5（`detail='none'` + 自写二字滑窗分词 + 原文后过滤） | 已落地 |
 | AI 侧 HTTP 客户端 | JDK 自带 `java.net.http.HttpClient` + 手写 JSON，**零新依赖** | 已落地 |
 | AI 服务端 | Python 3.11+ / FastAPI / Pydantic / httpx | 已落地（`qingdu-ai/`） |
@@ -223,7 +239,18 @@ copy .env.example .env          # 然后在 .env 里填上自己的 key
 > 抵不过它带来的调试成本（SQL 被生成成什么样看不见）。等表结构复杂起来、
 > 或者出现大量动态条件查询时再换，那时才有理由。
 
-### 云端同步服务（后期）
+### 云端同步服务 —— 不在本项目范围
+
+**轻读是一个纯本地、离线的桌面阅读器，不打算做账号和云端同步。** 这不是"还没做"，
+是一个明确的产品决定：
+
+- 本地 TXT / EPUB 阅读这个场景，跨设备续读的需求很弱，而账号体系带来的是
+  隐私成本、运维成本和"书被搬到别人服务器上"的心理负担；
+- 项目定位是「个人自用 + 展示工程能力」，把精力放在解析引擎、检索、排版这些
+  **能体现工程深度**的地方，比搭一套 CRUD 后台更有价值；
+- 真要做后端能力展示，那是另一个独立项目的事，不该塞进一个离线阅读器里。
+
+> 因此下表仅为"如果要做会怎么选"的记录，**不属于本项目的开发计划**。
 
 | 用途 | 选型 |
 |---|---|
@@ -302,10 +329,13 @@ qingdu-reader/
 │   │   ├── LineScanner      切出带字节偏移量的行
 │   │   └── ByteLine         一行文本 + 它在文件里的字节范围
 │   ├── parser/spi/          BookParser 接口（策略模式，便于扩展新格式）
-│   └── parser/txt/          TXT 解析
-│       ├── TxtBookParser        三步流程：元信息 / 建索引 / 读正文
-│       ├── ChapterTitleMatcher  格式校验 + 形态校验
-│       └── TxtChapterSplitter   序列校验（目录过滤 / 单调递增 / 卷重置）
+│   ├── BookParsers.java     格式注册表：扩展名 → 解析器（新增格式只改这一处）
+│   ├── parser/txt/          TXT 解析
+│   │   ├── TxtBookParser        三步流程：元信息 / 建索引 / 读正文
+│   │   ├── ChapterTitleMatcher  格式校验 + 形态校验
+│   │   └── TxtChapterSplitter   序列校验（目录过滤 / 单调递增 / 卷重置）
+│   └── parser/epub/         EPUB 解析（v0.5.0，零第三方依赖）
+│       └── EpubBookParser       container.xml → OPF → spine → XHTML 抽文本
 │
 ├── qingdu-store/            存储层：SQLite 持久化，不依赖 UI
 │   ├── Database             数据库入口：文件位置、表结构、连接（WAL + 外键 + 忙等待）
@@ -339,8 +369,8 @@ qingdu-reader/
 │       ├── ThemeStyles      主题 → 样式表 的映射与安装
 │       └── Typography       字体 / 字号 → 行内 CSS
 │
-└── qingdu-server/           云端同步服务（后期开发）
-    ├── controller/
+└── qingdu-server/           云端同步服务 —— **不在本项目范围**（未建、也不打算建，
+    ├── controller/          目录树保留在这里只为说明"当初设想过的结构"）
     ├── service/
     ├── mapper/
     ├── security/            JWT 鉴权
@@ -366,7 +396,7 @@ public record Chapter(
     String bookId,
     int    index,          // 章节序号
     String title,          // 章节标题
-    long   startOffset,    // TXT：起始字节偏移
+    long   startOffset,    // TXT：起始字节偏移；EPUB：spine 序号
     long   endOffset,
     List<ChapterBlock> blocks
 ) {}
@@ -379,7 +409,11 @@ public sealed interface ChapterBlock
 }
 ```
 
-解析器通过 `BookParser` 接口（SPI）接入，新增格式只需实现该接口，**渲染层与界面层完全不需要改动**。
+解析器通过 `BookParser` 接口接入，`BookParsers` 按扩展名挑一个出来，新增格式只需实现接口并往注册表里加一行，**渲染层与界面层完全不需要改动**。
+
+> **`startOffset` 的两种含义**：TXT 存字节偏移（翻页时 `RandomAccessFile.seek()` 只读那一章），
+> EPUB 存 spine 序号（zip 里没有"整文件的字节偏移"这个概念）。同一个字段承载两种语义
+> 不是偷懒 —— 阅读器只把它当作"交给对应解析器去定位的凭据"，从不自己解释它。
 
 ### 2. 分章不能只靠一条正则
 
@@ -468,7 +502,24 @@ public sealed interface ChapterBlock
 
 ### 6. 安全：不信任电子书内容
 
-EPUB 是可以内嵌 JavaScript 的。所有从电子书中提取的 XHTML **必须经过 jsoup 白名单过滤**，只保留 `p` / `h1`–`h6` / `img` / `em` / `strong` / `br` 等安全标签，绝不直接渲染原始内容。
+EPUB 是可以内嵌 JavaScript 的。这里采取的策略比常见的"白名单过滤"更硬：
+
+**只从 XHTML 里抽文本和图片引用，从不把原始 HTML 交给任何渲染引擎。**
+
+区别在于：白名单过滤是"在脚本被执行之前把它拦下来"，而只抽文本是"脚本根本没有被执行的机会"。
+轻读的正文一直是 JavaFX 的 `TextFlow` + `Text` 节点，从来不是一个 WebView ——
+所以 `<script>`、`<iframe>`、外部字体、CSS 注入这些东西从架构上就不存在攻击面。
+
+配套的三条加固：
+
+| 风险 | 处理 |
+|---|---|
+| XXE（外部实体注入） | `DocumentBuilderFactory` 开 `FEATURE_SECURE_PROCESSING`，并清空 `ACCESS_EXTERNAL_DTD` / `ACCESS_EXTERNAL_SCHEMA`，关掉 XInclude 与实体展开 |
+| 路径穿越（zip 里藏 `../../etc/passwd`） | 抽出来的图片一律写到缓存目录，文件名压平成单层（非 `[A-Za-z0-9._-]` 的字符全部替换掉） |
+| 超大图片拖垮内存 | 单张超过 8 MB 直接跳过；损坏的图片退化成一行占位文字，不整章打不开 |
+
+代价是丢掉了富文本样式（粗体、斜体、上下标）。对小说阅读来说这个代价可以忽略 ——
+而且它换来的是"不需要引入 jsoup 这个依赖"和"不怕任何一条漏掉的过滤规则"。
 
 ### 7. 书的 ID 不能用 UUID
 
@@ -1103,11 +1154,12 @@ java --module-path qingdu-desktop\target\package-stage\fx ^
 | 2 | 书库管理：**书架 + 批量导入 + 封面占位（v0.1.1）+ 分组筛选 + 书签备注 + 阅读时长（v0.3）**；收藏夹监控待做 | **已完成** |
 | 2.1 | 全文搜索：**SQLite FTS5 + 中文二字滑窗分词（v0.2.0）+ 跨书全库检索（v0.3）** | **已完成** |
 | 2.2 | AI 问答：**双进程 RAG —— 问句提取检索词 + FTS5 召回 + 段落切片段 + 大模型作答 + 引用可核对（v0.4）** | **已完成** |
-| 3 | 沉浸体验：全屏阅读、自动滚动、行距 / 双栏 | 计划中 |
-| 4 | EPUB 支持：epub4j 解析、统一章节模型落地、图片处理 | 计划中 |
-| 5 | 打包发布：jlink + jpackage、GitHub Release | **已完成（绿色版 + [v0.1.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.1.0) / [v0.1.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.1.1) / [v0.2.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.2.0) / [v0.2.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.2.1) / [v0.3.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.3.0) / [v0.4.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.4.0) / [v0.4.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.4.1) / [v0.4.2](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.4.2) Release；`.msi` 安装包待做）** |
-| 5.1 | AI 增强：向量检索 + rerank、流式输出、多轮追问 | 计划中（v0.5） |
-| 6 | 云端同步：Spring Boot 服务、账号、进度同步 | 远期 |
+| 3 | 沉浸体验：**全屏阅读（`F11`，自动收起 UI）+ 自动滚动 + 行距可调（v0.5.0）**；双栏待做 | **基本完成（差双栏）** |
+| 4 | EPUB 支持：**自研解析（zip + XML，零依赖）+ 统一章节模型落地 + 插图抽取与渲染（v0.5.0）** | **已完成** |
+| 5 | 打包发布：jlink + jpackage、GitHub Release | **已完成（绿色版 + [v0.1.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.1.0) / [v0.1.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.1.1) / [v0.2.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.2.0) / [v0.2.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.2.1) / [v0.3.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.3.0) / [v0.4.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.4.0) / [v0.4.1](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.4.1) / [v0.4.2](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.4.2) / [v0.5.0](https://github.com/zengchen666/qingdu-reader/releases/tag/v0.5.0) Release）** |
+| 5.2 | `.msi` 安装包：需要额外装 WiX 3.x + .NET 3.5 工具链 | 待定（优先级低 —— 绿色版已能满足"双击即用"） |
+| 5.1 | AI 增强：向量检索 + rerank、流式输出、多轮追问 | 计划中 |
+| 6 | 云端同步：Spring Boot 服务、账号、进度同步 | **不做** —— 见 [云端同步服务 —— 不在本项目范围](#云端同步服务--不在本项目范围) |
 | 7 | 扩展：听书、更多格式 | 远期 |
 
 ---

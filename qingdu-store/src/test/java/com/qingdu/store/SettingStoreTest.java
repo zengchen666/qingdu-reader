@@ -57,7 +57,7 @@ class SettingStoreTest {
     @Test
     @DisplayName("设置能完整地存进去、读回来")
     void roundTrip() {
-        ReaderSettings saved = new ReaderSettings(Theme.DARK, "楷体", 22, 20);
+        ReaderSettings saved = new ReaderSettings(Theme.DARK, "楷体", 22, 20, 1.8);
 
         settings.saveSettings(saved);
 
@@ -84,7 +84,7 @@ class SettingStoreTest {
     void saveSettingsKeepsUnrelatedKeys() {
         settings.put("unrelated.key", "keep me");
 
-        settings.saveSettings(new ReaderSettings(Theme.SEPIA, "宋体", 20, 18));
+        settings.saveSettings(new ReaderSettings(Theme.SEPIA, "宋体", 20, 18, 1.5));
 
         assertEquals("keep me", settings.get("unrelated.key", null));
         assertEquals(Theme.SEPIA, settings.loadSettings().theme());

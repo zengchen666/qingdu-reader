@@ -9,9 +9,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -59,6 +62,45 @@ class BookImporterTest {
         return tempDir.resolve("books");
     }
 
+    /**
+     * 造一个最小可用的 EPUB。
+     *
+     * <p>只为了验"扫目录时 {@code .epub} 会被收进来"这一条接线。
+     * 真正的解析行为在 core 的 {@code EpubBookParserTest} 里覆盖了，这里不重复。
+     */
+    private void writeEpub(Path path, String title) throws IOException {
+        Files.createDirectories(path.getParent());
+        String container = """
+                <?xml version="1.0"?>
+                <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+                  <rootfiles><rootfile full-path="c.opf" media-type="application/oebps-package+xml"/></rootfiles>
+                </container>""";
+        String opf = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+                  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                    <dc:title>"""
+                + title + """
+                </dc:title>
+                  </metadata>
+                  <manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest>
+                  <spine><itemref idref="c1"/></spine>
+                </package>""";
+        try (OutputStream out = Files.newOutputStream(path);
+             ZipOutputStream zip = new ZipOutputStream(out)) {
+            zip.putNextEntry(new ZipEntry("META-INF/container.xml"));
+            zip.write(container.getBytes(StandardCharsets.UTF_8));
+            zip.closeEntry();
+            zip.putNextEntry(new ZipEntry("c.opf"));
+            zip.write(opf.getBytes(StandardCharsets.UTF_8));
+            zip.closeEntry();
+            zip.putNextEntry(new ZipEntry("c1.xhtml"));
+            zip.write("<html xmlns=\"http://www.w3.org/1999/xhtml\"><body><p>正文</p></body></html>"
+                    .getBytes(StandardCharsets.UTF_8));
+            zip.closeEntry();
+        }
+    }
+
     @Test
     @DisplayName("递归导入：子目录、孙目录里的 TXT 都会被收进来")
     void recursiveImport() throws IOException {
@@ -76,17 +118,30 @@ class BookImporterTest {
     }
 
     @Test
-    @DisplayName("非 TXT 一律不碰")
-    void ignoresNonTxt() throws IOException {
+    @DisplayName("不支持的格式一律不碰")
+    void ignoresUnsupportedFormats() throws IOException {
         writeBook(booksDir().resolve("甲.txt"), "测试小说甲");
         Files.writeString(booksDir().resolve("说明.md"), "# 不是小说");
         Files.writeString(booksDir().resolve("备份.txt.bak"), "也不是");
-        Files.writeString(booksDir().resolve("老格式.epub"), "PK");
+        // 注意别在这里放 .epub —— v0.5.0 起它是受支持的格式，会被算进 scanned
+        Files.writeString(booksDir().resolve("老格式.mobi"), "BOOKMOBI");
 
         BookImporter.Report report = importer.importFolder(booksDir());
 
         assertEquals(1, report.scanned());
         assertEquals(1, store.books().count());
+    }
+
+    @Test
+    @DisplayName("EPUB 也会被收进书架（验的是「扩展名 → 解析器」这条接线，不是解析本身）")
+    void importsEpub() throws IOException {
+        writeEpub(booksDir().resolve("电子.epub"), "电子小说");
+
+        BookImporter.Report report = importer.importFolder(booksDir());
+
+        assertEquals(1, report.scanned());
+        assertEquals(1, report.imported());
+        assertEquals("电子小说", store.books().list().get(0).book().title());
     }
 
     @Test
@@ -133,14 +188,15 @@ class BookImporterTest {
     }
 
     @Test
-    @DisplayName("空文件夹：报告说「没找到 TXT」，而不是静默什么都不做")
+    @DisplayName("空文件夹：报告说「没找到支持的书」，而不是静默什么都不做")
     void emptyFolderIsReported() throws IOException {
         Path root = Files.createDirectories(booksDir());
 
         BookImporter.Report report = importer.importFolder(root);
 
         assertEquals(0, report.scanned());
-        assertTrue(report.summary().contains("没有找到 TXT"));
+        // 只断言"说清楚了没找到"，不写死格式清单 —— 加了新格式不该让这条测试变红
+        assertTrue(report.summary().contains("没有找到支持的电子书"));
     }
 
     @Test
@@ -149,7 +205,7 @@ class BookImporterTest {
         for (int i = 0; i < 5; i++) {
             writeBook(booksDir().resolve("第" + i + "本.txt"), "书" + i);
         }
-        BookImporter small = new BookImporter(store, null, 2);
+        BookImporter small = new BookImporter(store, 2);
 
         BookImporter.Report report = small.importFolder(booksDir());
 

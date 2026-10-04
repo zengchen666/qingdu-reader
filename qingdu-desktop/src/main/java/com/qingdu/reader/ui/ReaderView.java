@@ -7,6 +7,8 @@ import com.qingdu.common.domain.ChapterBlock;
 import com.qingdu.common.settings.ReaderSettings;
 import com.qingdu.common.settings.Theme;
 import com.qingdu.core.parser.BookParseException;
+import com.qingdu.core.parser.BookParsers;
+import com.qingdu.core.parser.spi.BookParser;
 import com.qingdu.core.parser.txt.TxtBookParser;
 import com.qingdu.core.parser.txt.TxtChapterSplitter;
 import com.qingdu.core.text.CharsetDetector;
@@ -19,7 +21,9 @@ import com.qingdu.store.model.ReadingProgress;
 import com.qingdu.store.model.RecentBook;
 import com.qingdu.store.model.SearchHit;
 import com.qingdu.store.model.SearchResult;
+import javafx.animation.KeyFrame;
 import javafx.animation.PauseTransition;
+import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.concurrent.Task;
 import javafx.geometry.Bounds;
@@ -66,6 +70,7 @@ import javafx.stage.Window;
 import javafx.util.Duration;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -137,15 +142,15 @@ public class ReaderView extends BorderPane {
      *       cfg 里的 {@code -Djpackage.app-version} 和 zip 的文件名；</li>
      *   <li>这里 —— 决定用户点「帮助 → 关于」时看到的数字。</li>
      * </ul>
-     * 几处不一致的后果很难看：exe 属性里写着 0.4.2，点开「关于」却是 0.4.1。
+     * 几处不一致的后果很难看：exe 属性里写着 0.5.0，点开「关于」却是 0.4.1。
      * 升版时除了这三处，<b>还要记得 Python 侧的 {@code qingdu_ai/__init__.py}
      * 里的 {@code __version__}</b> —— 它会通过 {@code /api/health} 上报给轻读，
-     * 漏改会出现"轻读说0.4.2、服务说 0.4.1"这种自相矛盾。
+     * 漏改会出现"轻读说0.5.0、服务说 0.4.1"这种自相矛盾。
      * 之所以不写成自动读取（{@code getPackage().getImplementationVersion()}），
      * 是因为开发模式下（{@code mvn javafx:run}）它恒为 null ——
      * 那样"关于"里就会显示一串 {@code null}，比手写一个常量更糟。
      */
-    public static final String VERSION = "0.4.2";
+    public static final String VERSION = "0.5.0";
 
     /** 「最近打开」菜单最多列几本。 */
     private static final int RECENT_LIMIT = 12;
@@ -184,7 +189,17 @@ public class ReaderView extends BorderPane {
 
     // ==================== 依赖 ====================
 
-    private final TxtBookParser parser = new TxtBookParser();
+    /**
+     * 当前这本书用的解析器。
+     *
+     * <p>v0.5 起它<b>不再是 TXT 专用</b>：打开文件时按扩展名从
+     * {@link BookParsers} 里挑一个，之后读元信息、建索引、读正文都走它。
+     * 界面因此不需要知道"现在打开的是哪种格式" ——
+     * 这正是 {@code BookParser} 这个接口存在的意义。
+     *
+     * <p>默认值给 TXT 是为了"还没打开过书"这个初始状态下不会是 null。
+     */
+    private BookParser parser = new TxtBookParser();
 
     /** 存储入口，可能为 null —— 表示"这次运行不保存任何东西"。 */
     private final QingduStore store;
@@ -243,6 +258,70 @@ public class ReaderView extends BorderPane {
 
     /** 侧栏当前是否收起。 */
     private boolean sidebarCollapsed = false;
+
+    // ==================== 沉浸阅读 ====================
+
+    /**
+     * 顶栏（菜单栏 + 书籍信息条）与状态栏的引用。
+     *
+     * <p>沉浸模式要把它们"整块拿掉"，而不是逐个控件设可见性 ——
+     * BorderPane 的上下两格各只有一个节点，抓住这两个节点就够了。
+     *
+     * <p>⚠️ 隐藏一个节点必须同时设 {@code visible} 和 {@code managed}：
+     * 只设 visible 的话，布局仍然为它留出空间，屏幕上会空出一条 ——
+     * 在全屏下那就是"内容没铺满"的错觉。
+     */
+    private Node topChrome;
+    private Node bottomChrome;
+
+    /** 当前是否处于沉浸模式（全屏 + 无边框 + 目录栏收起）。 */
+    private boolean immersive;
+
+    /** 「沉浸阅读」菜单项：文字要跟着状态在「沉浸阅读 / 退出沉浸」之间变。 */
+    private MenuItem immersiveItem;
+
+    /**
+     * 正在由程序自己切换全屏。
+     *
+     * <p>🔴 没有这个开关就会无限递归：我们调 {@code stage.setFullScreen()}
+     * 会触发 fullScreen 监听器，监听器又去调 setFullScreen……
+     * 这类"自己监听自己"的回环在 JavaFX 属性上很常见，必须显式挡住。
+     */
+    private boolean applyingImmersive;
+
+    /**
+     * 进入沉浸模式时，侧栏是不是<b>由我们</b>收起的。
+     *
+     * <p>用来在退出时决定要不要展开回去：用户本来就收着目录，
+     * 那退出沉浸后也该保持收着 —— 不然一次沉浸就把他的习惯改掉了。
+     */
+    private boolean immersiveCollapsedSidebar;
+
+    // ==================== 自动滚动 ====================
+
+    /**
+     * 自动滚动的速度，单位是"像素 / 秒"。
+     *
+     * <p>换算成 {@code vvalue} 的增量时必须除以"可滚动范围"，
+     * 而不是直接给 vvalue 加一个固定值 —— 后者会让长章滚得飞快、
+     * 短章慢得像没动，因为 vvalue 是 0~1 的比例。
+     */
+    private static final double AUTO_SCROLL_PX_PER_SEC = 36;
+    private static final double AUTO_SCROLL_TICK_MS = 100;
+
+    /**
+     * 自动滚动的驱动器。
+     *
+     * <p>用 {@code Timeline} 而不是自己起线程：它天然跑在 JavaFX 应用线程上，
+     * 改 {@code vvalue} 不需要再包一层 {@code Platform.runLater}。
+     * 自己起线程去动 UI 属性，是 JavaFX 里最常见的一类崩溃来源。
+     */
+    private final Timeline autoScroll = new Timeline(
+            new KeyFrame(Duration.millis(AUTO_SCROLL_TICK_MS), e -> tickAutoScroll()));
+
+    /** 自动滚动是否在跑。菜单项的文字也跟着它在「开始 / 停止」之间变。 */
+    private boolean autoScrolling;
+    private MenuItem autoScrollItem;
 
     /**
      * 阅读设置窗口。非模态、单例。
@@ -385,8 +464,17 @@ public class ReaderView extends BorderPane {
 
         getStyleClass().add("reader-window");
         readerPane = buildCenter();
-        setTop(buildTop());
-        setBottom(buildStatusBar());
+        topChrome = buildTop();
+        bottomChrome = buildStatusBar();
+        setTop(topChrome);
+        setBottom(bottomChrome);
+
+        // 用户一滚滚轮就停掉自动滚动：他显然想自己控制位置了。
+        // 刻意监听 scroll 事件而不是 vvalue 的变化 —— 后者会把自动滚动
+        // 自己造成的位移误判成"用户干预"，结果是一启动就把自己停掉。
+        contentScroll.setOnScroll(e -> stopAutoScroll(null));
+        autoScroll.setCycleCount(Timeline.INDEFINITE);
+        installImmersiveSync();
 
         // 书架的动作全部回调到本类：弹框要跟主题换肤、移除要删数据，
         // 那两件事都只有这里做得对（BookshelfView 的类注释里有说明）
@@ -547,7 +635,14 @@ public class ReaderView extends BorderPane {
         sidebarItem.setAccelerator(KeyCombination.keyCombination("F9"));
         sidebarItem.setOnAction(e -> toggleSidebar());
 
-        return new MenuItem[]{themeMenu, new SeparatorMenuItem(), sidebarItem,
+        immersiveItem = new MenuItem("沉浸阅读");
+        // F11 是"全屏"的事实标准。退出全屏用 Esc —— 那是 JavaFX 在
+        // 全屏模式下自带的键，这里不用再绑一次，只需要监听状态（见
+        // bindFullScreen）把界面边框恢复回来
+        immersiveItem.setAccelerator(KeyCombination.keyCombination("F11"));
+        immersiveItem.setOnAction(e -> setImmersive(!immersive));
+
+        return new MenuItem[]{themeMenu, new SeparatorMenuItem(), sidebarItem, immersiveItem,
                 new SeparatorMenuItem(), settingsItem, new SeparatorMenuItem(), bigger, smaller};
     }
 
@@ -571,7 +666,10 @@ public class ReaderView extends BorderPane {
         next.setAccelerator(KeyCombination.keyCombination("Alt+Right"));
         next.setOnAction(e -> stepChapter(1));
 
-        return new MenuItem[]{previous, next};
+        autoScrollItem = new MenuItem("自动滚动");
+        autoScrollItem.setOnAction(e -> toggleAutoScroll());
+
+        return new MenuItem[]{previous, next, new SeparatorMenuItem(), autoScrollItem};
     }
 
     /** 主题子菜单：一组单选菜单项。 */
@@ -832,6 +930,186 @@ public class ReaderView extends BorderPane {
         return position > 0 ? position : DEFAULT_DIVIDER;
     }
 
+    // ==================== 沉浸阅读 ====================
+
+    /**
+     * 把"窗口进入 / 退出全屏"这件事接回来。
+     *
+     * <p><b>为什么必须监听？</b> 因为退出全屏不一定是我们触发的 ——
+     * JavaFX 在全屏模式下自带 Esc 退出。不监听的话，用户按 Esc 之后
+     * 全屏退出了、顶栏和状态栏却还藏着，界面就卡在一个既不是沉浸
+     * 也不是正常的中间态，而他能做的只有再按一次 F11 碰运气。
+     *
+     * <p><b>为什么挂在 scene / window 两个属性上？</b>
+     * 构造 ReaderView 的时候 {@code getScene()} 还是 null（Scene 要在
+     * 应用启动之后才挂上），直接取 Stage 一定拿不到。所以谁先到就绑谁。
+     */
+    private void installImmersiveSync() {
+        sceneProperty().addListener((obs, oldScene, newScene) -> {
+            if (newScene == null) {
+                return;
+            }
+            newScene.windowProperty().addListener((o, oldWindow, newWindow) -> bindFullScreen(newWindow));
+            bindFullScreen(newScene.getWindow());
+        });
+    }
+
+    private void bindFullScreen(Window window) {
+        if (!(window instanceof Stage stage)) {
+            return;
+        }
+        stage.fullScreenProperty().addListener((obs, wasFullScreen, nowFullScreen) -> {
+            if (applyingImmersive) {
+                return;
+            }
+            setImmersive(nowFullScreen);
+        });
+    }
+
+    /** 进入 / 退出沉浸模式。幂等，重复调用不会叠加。 */
+    private void setImmersive(boolean value) {
+        if (value == immersive) {
+            return;
+        }
+        immersive = value;
+        applyingImmersive = true;
+        try {
+            if (windowOrNull() instanceof Stage stage) {
+                stage.setFullScreen(immersive);
+            }
+        } finally {
+            applyingImmersive = false;
+        }
+        applyImmersiveChrome();
+    }
+
+    private void applyImmersiveChrome() {
+        setChromeVisible(topChrome, !immersive);
+        setChromeVisible(bottomChrome, !immersive);
+        if (immersiveItem != null) {
+            immersiveItem.setText(immersive ? "退出沉浸阅读" : "沉浸阅读");
+        }
+
+        if (immersive) {
+            immersiveCollapsedSidebar = !sidebarCollapsed;
+            setSidebarCollapsed(true);
+        } else {
+            // 只在我们当初"替用户收起"的情况下才展开回去。
+            // 他本来就收着目录的话，一次沉浸不该把习惯改掉
+            if (immersiveCollapsedSidebar) {
+                setSidebarCollapsed(false);
+            }
+            immersiveCollapsedSidebar = false;
+            statusLabel.setText("已退出沉浸阅读");
+        }
+    }
+
+    /**
+     * @param visible false 时必须连 {@code managed} 一起关掉：
+     *                只设 visible 的话布局仍然给它留位子，全屏下就是一条空白
+     */
+    private static void setChromeVisible(Node chrome, boolean visible) {
+        if (chrome == null) {
+            return;
+        }
+        chrome.setVisible(visible);
+        chrome.setManaged(visible);
+    }
+
+    // ==================== 自动滚动 ====================
+
+    private void toggleAutoScroll() {
+        if (autoScrolling) {
+            stopAutoScroll("自动滚动已停止");
+            return;
+        }
+        startAutoScroll();
+    }
+
+    /**
+     * 开始自动滚动。
+     *
+     * <p>两件事要先挡：没打开书、以及本章一屏就装得下。
+     * 第二种情况如果不挡，Timeline 会一直空转（range 为 0 时增量算不出来），
+     * 界面上表现为"点了没反应，但状态栏说在滚动"。
+     */
+    private void startAutoScroll() {
+        if (chapters.isEmpty() || currentChapterIndex < 0) {
+            statusLabel.setText("先打开一本书再自动滚动");
+            return;
+        }
+        if (scrollableRange() <= 0) {
+            statusLabel.setText("本章一屏就能显示完，不用滚动");
+            return;
+        }
+        autoScrolling = true;
+        if (autoScrollItem != null) {
+            autoScrollItem.setText("停止自动滚动");
+        }
+        autoScroll.playFromStart();
+        statusLabel.setText("自动滚动中（滚一下鼠标即停止）");
+    }
+
+    private void stopAutoScroll(String message) {
+        if (!autoScrolling) {
+            return;
+        }
+        autoScrolling = false;
+        autoScroll.stop();
+        if (autoScrollItem != null) {
+            autoScrollItem.setText("自动滚动");
+        }
+        if (message != null) {
+            statusLabel.setText(message);
+        }
+    }
+
+    /**
+     * 自动滚动每帧走一步。
+     *
+     * <p>滚到本章末尾时<b>自动翻到下一章继续</b> —— 这是这个功能存在的
+     * 意义：手不用管。停在每章末尾的话，用户还是得每隔几分钟点一次，
+     * "自动"两个字就名不副实了。真的读到全书最后一章末尾才停。
+     */
+    private void tickAutoScroll() {
+        double range = scrollableRange();
+        if (range <= 0) {
+            // 本章一屏就装得下：增量算不出来，必须直接往下走。
+            // 这里如果只 return，Timeline 会一直空转 —— 状态栏说"滚动中"、
+            // 画面却永远不动，而且短章节永远翻不过去
+            advanceAutoScroll();
+            return;
+        }
+        double delta = AUTO_SCROLL_PX_PER_SEC * (AUTO_SCROLL_TICK_MS / 1000.0) / range;
+        double next = contentScroll.getVvalue() + delta;
+        if (next < 1.0) {
+            contentScroll.setVvalue(next);
+            return;
+        }
+        advanceAutoScroll();
+    }
+
+    /** 本章读完：有下一章就翻过去继续滚，没有（全书读完）才停。 */
+    private void advanceAutoScroll() {
+        if (currentChapterIndex >= 0 && currentChapterIndex + 1 < chapters.size()) {
+            stepChapter(1);
+            return;
+        }
+        contentScroll.setVvalue(1.0);
+        stopAutoScroll("已读到全书末尾，自动滚动停止");
+    }
+
+    /** 还能往下滚多少像素。vvalue 是 0~1 的比例，换算增量必须用它做分母。 */
+    private double scrollableRange() {
+        Node content = contentScroll.getContent();
+        if (content == null) {
+            return 0;
+        }
+        double total = content.getBoundsInLocal().getHeight();
+        double view = contentScroll.getViewportBounds().getHeight();
+        return Math.max(0, total - view);
+    }
+
     /**
      * 按当前字号算出"版心"的宽度，并同步给正文和进度条。
      *
@@ -987,6 +1265,10 @@ public class ReaderView extends BorderPane {
         // 回到书架 = 不在读任何书。必须先结算再切界面，
         // 否则用户在书架上看到的时长会少算刚才那段时间
         readingTime.finish();
+        // 顺便把"正在读"的两件事收掉：在书架界面上继续自动滚动、
+        // 或者保持全屏无边框，都是说不通的状态
+        stopAutoScroll(null);
+        setImmersive(false);
         setCenter(bookshelf);
         bookshelf.refresh();
 
@@ -1007,9 +1289,14 @@ public class ReaderView extends BorderPane {
     /** 弹出文件选择框，选中后打开。 */
     public void chooseAndOpen() {
         FileChooser chooser = new FileChooser();
-        chooser.setTitle("选择要打开的 TXT 小说");
+        chooser.setTitle("选择要打开的小说");
+        // 过滤器从 BookParsers 反推，不在这里写死 ——
+        // 否则加一种格式忘了改这里，就会出现"解析器支持但选择器选不到"
         chooser.getExtensionFilters().addAll(
+                new FileChooser.ExtensionFilter("电子书 (*.txt;*.epub)",
+                        BookParsers.supportedExtensions().toArray(new String[0])),
                 new FileChooser.ExtensionFilter("文本文件 (*.txt)", "*.txt"),
+                new FileChooser.ExtensionFilter("EPUB 电子书 (*.epub)", "*.epub"),
                 new FileChooser.ExtensionFilter("全部文件", "*.*"));
         File chosen = chooser.showOpenDialog(windowOrNull());
         if (chosen != null) {
@@ -1254,15 +1541,16 @@ public class ReaderView extends BorderPane {
         // 刚才那本的滚动位置就丢了
         persistProgress();
 
-        // 先拦一道：目前只有 TXT 解析器。
-        // 如果不拦，EPUB 会被当成 TXT 硬读 —— 它的本质是 zip 压缩包，
+        // 先按扩展名挑解析器。挑不到就明确说"不支持"，
+        // 绝不能拿 TXT 解析器去硬读 —— EPUB 本质是 zip 压缩包，
         // 读出来是一堆二进制乱码，用户只会以为"这软件坏了"。
-        // 与其给出错误的结果，不如给出清楚的解释。
         BookFormat format = BookFormat.fromFileName(file.getFileName().toString());
-        if (format != BookFormat.TXT) {
+        BookParser chosen = BookParsers.forFile(file);
+        if (chosen == null) {
             showUnsupportedFormat(file, format);
             return;
         }
+        parser = chosen;
 
         currentFile = file;
         statusLabel.setText("正在解析：" + file.getFileName() + " …");
@@ -1271,9 +1559,8 @@ public class ReaderView extends BorderPane {
             @Override
             protected LoadResult call() throws Exception {
                 Book book = parser.parseMetadata(file);
-                TxtChapterSplitter.Report report = parser.index(file, book.id());
-                CharsetDetector.Detection detection = CharsetDetector.detect(file);
-                return new LoadResult(book, report, detection);
+                List<Chapter> chapters = parser.parseChapters(file, book.id());
+                return new LoadResult(book, chapters, describeFormat(file, chapters));
             }
         };
         task.setOnSucceeded(event -> applyResult(task.getValue()));
@@ -1297,18 +1584,18 @@ public class ReaderView extends BorderPane {
         Alert alert = themedAlert(Alert.AlertType.INFORMATION);
         alert.setHeaderText("暂时还打不开 " + shown + " 格式");
         alert.setContentText("""
-                目前只支持 TXT 纯文本。
+                目前支持 TXT 和 EPUB 两种格式。
 
-                原因：EPUB 等格式需要另一整套解析链路（zip 解包 → OPF 清单解析 → XHTML 提纯），
-                计划在阶段 4 实现。现在硬读只会得到一堆乱码，所以先不做。
+                其余格式（MOBI / AZW3 / PDF / 漫画）需要各自一套解析链路，
+                现在硬读只会得到一堆乱码，所以先不做。
 
-                你可以先打开一本 TXT 小说试试。""");
+                你可以先打开一本 TXT 小说或 EPUB 电子书试试。""");
         alert.showAndWait();
     }
 
     private void applyResult(LoadResult result) {
         currentBook = result.book();
-        chapters = result.report().chapters();
+        chapters = result.chapters();
         currentChapterIndex = -1;
 
         // 数据齐了才把中心区切回阅读态。切早了会先闪一下空白的目录栏
@@ -1374,8 +1661,29 @@ public class ReaderView extends BorderPane {
         Book book = result.book();
         String author = book.authorName().orElse("作者未知");
         return author + "    ·    " + book.fileName()
-                + "    ·    " + result.detection().displayName()
-                + "（" + result.detection().reason() + "）";
+                + "    ·    " + result.formatNote();
+    }
+
+    /**
+     * 状态栏里"这本书是怎么读出来的"那一小段说明。
+     *
+     * <p>TXT 报<b>编码探测结果</b>：这是中文 TXT 最容易出错的一环
+     * （GBK / UTF-8 搞混就是满屏乱码），值得给用户看见。
+     *
+     * <p>EPUB 报<b>正文文档数</b>：它没有编码问题，但"这本书由多少个
+     * XHTML 文件拼起来"能顺带说明为什么章节和文件不是一一对应的。
+     */
+    private String describeFormat(Path file, List<Chapter> chapters) {
+        if (BookFormat.fromFileName(file.getFileName().toString()) == BookFormat.EPUB) {
+            return "EPUB · " + chapters.size() + " 个文档";
+        }
+        try {
+            CharsetDetector.Detection detection = CharsetDetector.detect(file);
+            return detection.displayName() + "（" + detection.reason() + "）";
+        } catch (IOException e) {
+            // 探测不出来只是信息栏少一条说明，不该让整本书打不开
+            return "编码未识别";
+        }
     }
 
     /** 关掉当前书，回到书架。 */
@@ -2403,10 +2711,15 @@ public class ReaderView extends BorderPane {
     /**
      * 后台任务的返回结果。
      *
-     * <p>用一个 record 把三样东西一起搬回应用线程，比定义三个字段再逐个赋值清楚。
+     * <p>用一个 record 把东西一起搬回应用线程，比定义几个字段再逐个赋值清楚。
+     *
+     * <p><b>为什么存 {@code chapters} 而不是 TXT 的诊断报告？</b>
+     * v0.5 之前这里存的是 {@code TxtChapterSplitter.Report}，但界面真正
+     * 用到的只有里面的 {@code chapters()}，其余诊断数字没人读；
+     * 而 EPUB 根本没有那个报告。把 {@code Report} 换成
+     * {@code List<Chapter>} 之后，这个 record 就不再绑死在单一格式上了。
      */
-    private record LoadResult(Book book, TxtChapterSplitter.Report report,
-                              CharsetDetector.Detection detection) {
+    private record LoadResult(Book book, List<Chapter> chapters, String formatNote) {
     }
 
     /**

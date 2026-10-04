@@ -21,7 +21,8 @@ public record ReaderSettings(
         Theme theme,
         String fontFamily,
         int fontSize,
-        double paragraphSpacing
+        double paragraphSpacing,
+        double lineSpacing
 ) {
 
     public static final int MIN_FONT_SIZE = 12;
@@ -29,11 +30,26 @@ public record ReaderSettings(
     public static final double MIN_PARAGRAPH_SPACING = 0;
     public static final double MAX_PARAGRAPH_SPACING = 40;
 
+    /**
+     * 行距用<b>倍数</b>而不是像素值。
+     *
+     * <p>倍数的好处是它跟着字号走：字号从 17 调到 30，行距自动按比例变宽，
+     * 用户不需要再回头调一遍行距。存像素值的话，改一次字号排版就散了 ——
+     * 而"改字号"恰好是阅读器里最常动的一项设置。
+     *
+     * <p>1.0 表示"不额外加行距"（JavaFX 的默认值），2.5 是中文阅读的上限
+     * （再大就散成一片，失去段落感）。默认值 1.6 是按中文正文的经验值定的。
+     */
+    public static final double MIN_LINE_SPACING = 1.0;
+    public static final double MAX_LINE_SPACING = 2.5;
+    public static final double DEFAULT_LINE_SPACING = 1.6;
+
     /** 持久化用的键名。集中在这里，避免各处写字符串导致拼错。 */
     public static final String KEY_THEME = "reader.theme";
     public static final String KEY_FONT_FAMILY = "reader.font.family";
     public static final String KEY_FONT_SIZE = "reader.font.size";
     public static final String KEY_PARAGRAPH_SPACING = "reader.paragraph.spacing";
+    public static final String KEY_LINE_SPACING = "reader.line.spacing";
 
     /**
      * 本组设置涉及的全部键。
@@ -43,7 +59,7 @@ public record ReaderSettings(
      * 才不会被漏掉（详见 {@code SettingStore.saveSettings}）。
      */
     public static final java.util.List<String> KNOWN_KEYS = java.util.List.of(
-            KEY_THEME, KEY_FONT_FAMILY, KEY_FONT_SIZE, KEY_PARAGRAPH_SPACING);
+            KEY_THEME, KEY_FONT_FAMILY, KEY_FONT_SIZE, KEY_PARAGRAPH_SPACING, KEY_LINE_SPACING);
 
     public ReaderSettings {
         theme = (theme == null) ? Theme.defaultTheme() : theme;
@@ -56,28 +72,46 @@ public record ReaderSettings(
 
         fontSize = (int) clamp(fontSize, MIN_FONT_SIZE, MAX_FONT_SIZE);
         paragraphSpacing = clamp(paragraphSpacing, MIN_PARAGRAPH_SPACING, MAX_PARAGRAPH_SPACING);
+        lineSpacing = clamp(lineSpacing, MIN_LINE_SPACING, MAX_LINE_SPACING);
     }
 
     public static ReaderSettings defaults() {
-        return new ReaderSettings(Theme.defaultTheme(), null, 17, 14);
+        return new ReaderSettings(
+                Theme.defaultTheme(), null, 17, 14, DEFAULT_LINE_SPACING);
     }
 
     // ==================== 复制修改 ====================
 
     public ReaderSettings withTheme(Theme newTheme) {
-        return new ReaderSettings(newTheme, fontFamily, fontSize, paragraphSpacing);
+        return new ReaderSettings(newTheme, fontFamily, fontSize, paragraphSpacing, lineSpacing);
     }
 
     public ReaderSettings withFontFamily(String newFamily) {
-        return new ReaderSettings(theme, newFamily, fontSize, paragraphSpacing);
+        return new ReaderSettings(theme, newFamily, fontSize, paragraphSpacing, lineSpacing);
     }
 
     public ReaderSettings withFontSize(int newSize) {
-        return new ReaderSettings(theme, fontFamily, newSize, paragraphSpacing);
+        return new ReaderSettings(theme, fontFamily, newSize, paragraphSpacing, lineSpacing);
     }
 
     public ReaderSettings withParagraphSpacing(double newSpacing) {
-        return new ReaderSettings(theme, fontFamily, fontSize, newSpacing);
+        return new ReaderSettings(theme, fontFamily, fontSize, newSpacing, lineSpacing);
+    }
+
+    public ReaderSettings withLineSpacing(double newSpacing) {
+        return new ReaderSettings(theme, fontFamily, fontSize, paragraphSpacing, newSpacing);
+    }
+
+    /**
+     * 行距换算成 JavaFX 需要的<b>像素</b>。
+     *
+     * <p>{@code TextFlow.setLineSpacing()} 收的是"每行之间额外加多少像素"，
+     * 而存的是倍数，所以这里是 {@code 字号 × (倍数 − 1)}。
+     * 传进来的 {@code sizeScale} 是标题的放大倍数 —— 标题字号更大，
+     * 行距也得跟着放大，否则标题一换行就会挤在一起。
+     */
+    public double lineSpacingPixels(double sizeScale) {
+        return Math.max(0, fontSize * sizeScale * (lineSpacing - 1.0));
     }
 
     // ==================== 与键值表互转 ====================
@@ -97,6 +131,7 @@ public record ReaderSettings(
         }
         map.put(KEY_FONT_SIZE, String.valueOf(fontSize));
         map.put(KEY_PARAGRAPH_SPACING, String.valueOf(paragraphSpacing));
+        map.put(KEY_LINE_SPACING, String.valueOf(lineSpacing));
         return map;
     }
 
@@ -106,6 +141,9 @@ public record ReaderSettings(
      * <p><b>每一项都单独兜底</b>：缺项或值非法时只让那一项退回默认值，
      * 不影响其它项。比起"整份配置有一个字段坏了就全丢"，
      * 这个粒度对用户友好得多 —— 至少字号不会因为主题名被写错而一起被重置。
+     *
+     * <p>行距键是 v0.5 才加的，老库里没有 —— 走 {@code parseDouble} 的
+     * 兜底分支拿到默认值，不需要写迁移（详见 {@code Database} 的迁移说明）。
      */
     public static ReaderSettings from(Map<String, String> map) {
         ReaderSettings def = defaults();
@@ -116,7 +154,8 @@ public record ReaderSettings(
                 Theme.fromId(map.get(KEY_THEME), def.theme()),
                 map.containsKey(KEY_FONT_FAMILY) ? map.get(KEY_FONT_FAMILY) : def.fontFamily(),
                 parseInt(map.get(KEY_FONT_SIZE), def.fontSize()),
-                parseDouble(map.get(KEY_PARAGRAPH_SPACING), def.paragraphSpacing()));
+                parseDouble(map.get(KEY_PARAGRAPH_SPACING), def.paragraphSpacing()),
+                parseDouble(map.get(KEY_LINE_SPACING), def.lineSpacing()));
     }
 
     /** 界面上显示字体名用：null 换成"系统默认"。 */
@@ -140,7 +179,10 @@ public record ReaderSettings(
             return fallback;
         }
         try {
-            return Double.parseDouble(raw.trim());
+            double v = Double.parseDouble(raw.trim());
+            // NaN / 无穷大是"能解析成功的非法值"：Double.parseDouble 对
+            // "NaN"、"Infinity" 不抛异常，但把它们写进布局会算出怪尺寸。
+            return Double.isFinite(v) ? v : fallback;
         } catch (NumberFormatException e) {
             return fallback;
         }
